@@ -1,5 +1,36 @@
 /**
  * @purpose Dual-output logging system (terminal + optional file) that mirrors Python SDK UX with colored terminal output and @xray tool tracing
+ *
+ * @graph Dual Output Flow
+ *
+ *   Agent / Tool Executor
+ *        │
+ *        ▼
+ *   console.print(message)
+ *        │
+ *        ├──────────────────────────────┐
+ *        ▼                              ▼
+ *   ┌──────────────────┐     ┌───────────────────────┐
+ *   │  stderr (TTY)    │     │  Log File (optional)  │
+ *   │                  │     │                       │
+ *   │  [HH:MM:SS]     │     │  .co/logs/{name}.log  │
+ *   │  + ANSI colors   │     │  plain text, no ANSI  │
+ *   │  + dim timestamp │     │  + [timestamp] prefix │
+ *   └──────────────────┘     └───────────────────────┘
+ *
+ * @graph @xray Output Block
+ *
+ *   printXray(toolName, args, result, timing, context)
+ *        │
+ *        ▼
+ *   ┌───────────────────────────────────────┐
+ *   │  @xray: toolName                      │
+ *   │    agent: myAgent  iter: 3            │
+ *   │    args: { query: "hello" }           │
+ *   │    result: "world"                    │
+ *   │    timing: 42ms                       │
+ *   └───────────────────────────────────────┘
+ *
  * @llm-note
  *   Dependencies: imports from [node:fs, node:path] | imported by [src/core/agent.ts, src/tools/tool-executor.ts] | tested by agent tests
  *   Data flow: receives log messages/xray traces → formats with timestamps/colors → writes to stderr + optional file (.co/logs/{name}.log)

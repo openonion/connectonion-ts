@@ -1,5 +1,53 @@
 /**
  * @purpose Debugging context injection system for @xray decorated tools (migrated from Python xray.py - simplified version)
+ *
+ * @graph Xray Debug Lifecycle
+ *
+ *   Agent.input(prompt) ── main loop iteration ──┐
+ *                                                │
+ *                                                ▼
+ *                                  ┌──────────────────────────┐
+ *                                  │  injectXrayContext()      │
+ *                                  │  ┌────────────────────┐  │
+ *                                  │  │ xrayContext = {     │  │
+ *                                  │  │   agent,            │  │
+ *                                  │  │   userPrompt,       │  │
+ *                                  │  │   messages,         │  │
+ *                                  │  │   iteration,        │  │
+ *                                  │  │   previousTools     │  │
+ *                                  │  │ }                   │  │
+ *                                  │  └────────────────────┘  │
+ *                                  └────────────┬─────────────┘
+ *                                               │
+ *                                               ▼
+ *                                  ┌──────────────────────────┐
+ *                                  │  tool.run(args)          │
+ *                                  │  ┌────────────────────┐  │
+ *                                  │  │ if @xray marked:   │  │
+ *                                  │  │  getXrayContext()   │  │
+ *                                  │  │  → inspect/debug    │  │
+ *                                  │  │  → pause execution  │  │
+ *                                  │  └────────────────────┘  │
+ *                                  └────────────┬─────────────┘
+ *                                               │
+ *                                               ▼
+ *                                  ┌──────────────────────────┐
+ *                                  │  clearXrayContext()       │
+ *                                  │  xrayContext = {null...}  │
+ *                                  └──────────────────────────┘
+ *
+ * @graph trace() Visual Output
+ *
+ *   trace() ──▶ reads agent session ──▶ stderr output:
+ *
+ *   ┌─────────────────────────────────────────────┐
+ *   │ Iteration 1:                                │
+ *   │   tool_a(args) → result  [42ms] OK         │
+ *   │ Iteration 2:                                │
+ *   │   tool_b(args) → result  [18ms] OK         │
+ *   │   tool_c(args) → error   [5ms]  FAIL       │
+ *   └─────────────────────────────────────────────┘
+ *
  * @llm-note
  *   Dependencies: none (leaf node) | imported by [src/core/agent.ts, src/index.ts] | tested by [examples/test-migrations.ts]
  *   Data flow: receives from Agent → injectXrayContext(agent, userPrompt, messages, iteration, previousTools) → stores in module-scoped xrayContext → tools access via getXrayContext() → clearXrayContext() after execution

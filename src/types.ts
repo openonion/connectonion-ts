@@ -1,5 +1,45 @@
 /**
  * @purpose Core type definitions that provide compile-time safety and IDE support across the entire SDK
+ *
+ * @graph Type Relationship Map
+ *
+ *   ┌─────────────────────────────────────────────────────────────┐
+ *   │                      AgentConfig                            │
+ *   │  { name, llm?, tools?, systemPrompt?, model?, trust? }     │
+ *   │         │        │                                          │
+ *   │         ▼        ▼                                          │
+ *   │       ┌───┐   ┌──────┐                                     │
+ *   │       │LLM│   │Tool[]│                                     │
+ *   │       └─┬─┘   └──┬───┘                                     │
+ *   │         │        │                                          │
+ *   │         │        ├──▶ Tool.run(args) → any                  │
+ *   │         │        └──▶ Tool.toFunctionSchema() ──┐           │
+ *   │         │                                       ▼           │
+ *   │         │                              ┌─────────────────┐  │
+ *   │         │                              │ FunctionSchema  │  │
+ *   │         │                              │ {name, desc,    │  │
+ *   │         │                              │  parameters}    │  │
+ *   │         │                              └────────┬────────┘  │
+ *   │         │                                       │           │
+ *   │         ▼                                       │           │
+ *   │  LLM.complete(Message[], FunctionSchema[]) <────┘           │
+ *   │         │                                                   │
+ *   │         ▼                                                   │
+ *   │   ┌───────────┐        ┌──────────┐                        │
+ *   │   │LLMResponse│───────▶│ToolCall[]│                        │
+ *   │   │{content,  │        │{name,    │                        │
+ *   │   │ toolCalls}│        │ args, id}│                        │
+ *   │   └───────────┘        └──────────┘                        │
+ *   │                                                             │
+ *   │   ┌───────────┐  OpenAI-compatible message format           │
+ *   │   │  Message   │  {role, content, tool_calls?, tool_call_id?}│
+ *   │   └───────────┘                                             │
+ *   │                                                             │
+ *   │   ┌────────────┐  Tool execution result                     │
+ *   │   │ ToolResult  │  {status, result?, error?}                │
+ *   │   └────────────┘                                            │
+ *   └─────────────────────────────────────────────────────────────┘
+ *
  * @llm-note
  *   Dependencies: none (leaf node) | imported by [src/core/agent.ts, src/llm/*.ts, src/tools/tool-utils.ts, src/index.ts] | tested by [tests/agent.test.ts]
  *   Data flow: defines interfaces → used throughout codebase for type checking → no runtime data processing

@@ -1,5 +1,62 @@
 /**
  * @purpose Main Agent orchestrator that combines LLM reasoning with parallel tool execution, multi-turn conversations, and interactive debugging
+ *
+ * @graph Agent Execution Flow
+ *
+ *   ┌─────────────────────────────────────────────────────────────────┐
+ *   │                        agent.input(prompt)                      │
+ *   └──────────────────────────────┬──────────────────────────────────┘
+ *                                  │
+ *                                  ▼
+ *                    ┌──────────────────────────┐
+ *                    │  Lazy-Init Messages       │
+ *                    │  [system] + [user prompt] │
+ *                    └────────────┬─────────────┘
+ *                                 │
+ *                                 ▼
+ *              ┌──────────────────────────────────────┐
+ *              │          Main Loop (max 10 iter)      │
+ *              │  ┌────────────────────────────────┐   │
+ *              │  │   LLM.complete(messages, tools) │   │
+ *              │  └───────────────┬────────────────┘   │
+ *              │                  │                     │
+ *              │         ┌───────┴────────┐            │
+ *              │         │  Tool calls?   │            │
+ *              │         └───┬────────┬───┘            │
+ *              │          No │        │ Yes             │
+ *              │             │        ▼                 │
+ *              │             │  ┌──────────────────┐   │
+ *              │             │  │  Promise.all(     │   │
+ *              │             │  │    tool₁.run()    │   │
+ *              │             │  │    tool₂.run()    │   │
+ *              │             │  │    ...            │   │
+ *              │             │  │  )                │   │
+ *              │             │  └────────┬─────────┘   │
+ *              │             │           │              │
+ *              │             │           ▼              │
+ *              │             │  ┌──────────────────┐   │
+ *              │             │  │ Append results   │   │
+ *              │             │  │ to messages[]    │───┘ (loop back)
+ *              │             │  └──────────────────┘
+ *              │             │
+ *              └─────────────┼────────────────────────┘
+ *                            │
+ *                            ▼
+ *                 ┌────────────────────┐
+ *                 │  Return final text  │
+ *                 │  response string    │
+ *                 └────────────────────┘
+ *
+ * @graph Multi-Turn Conversation State
+ *
+ *   input("Hi")          input("Name?")        resetConversation()
+ *       │                     │                       │
+ *       ▼                     ▼                       ▼
+ *   ┌────────┐          ┌────────────┐          ┌──────────┐
+ *   │messages│─persist─▶│messages    │─persist─▶│messages  │
+ *   │[sys,u] │          │[sys,u,a,u] │          │  = []    │
+ *   └────────┘          └────────────┘          └──────────┘
+ *
  * @llm-note
  *   Dependencies: imports from [src/types, src/llm/index, src/console, src/tools/tool-utils, src/trust/index, node:fs, node:dotenv, node:readline] | imported by [src/index.ts] | tested by [tests/agent.test.ts, tests/e2e/*.test.ts]
  *   Data flow: receives user prompt → lazy-init messages array (system + user) → LLM loop (max 10 iterations) → parallel tool execution via Promise.all → adds tool results to messages → repeats until no tool calls → returns final text response

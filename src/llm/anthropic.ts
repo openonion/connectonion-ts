@@ -1,5 +1,33 @@
 /**
  * @purpose Anthropic Claude provider (default SDK LLM) with native tool support and message format conversion from OpenAI-style to Claude API
+ *
+ * @graph Message Format Conversion (OpenAI → Anthropic)
+ *
+ *   Message[] (OpenAI-style)              Anthropic API format
+ *   ┌──────────────────────┐             ┌────────────────────────┐
+ *   │ {role:'system',      │   extract   │ system: "You are..."   │
+ *   │  content:'You are..'}│ ──────────▶ │                        │
+ *   │ {role:'user',        │   convert   │ messages: [            │
+ *   │  content:'Hello'}    │ ──────────▶ │   {role:'user',        │
+ *   │ {role:'assistant',   │             │    content:'Hello'},   │
+ *   │  content:'Hi',       │ ──────────▶ │   {role:'assistant',   │
+ *   │  tool_calls:[...]}   │             │    content:[           │
+ *   │ {role:'tool',        │             │      {type:'text',...},│
+ *   │  content:'result'}   │ ──────────▶ │      {type:'tool_use'}│
+ *   └──────────────────────┘             │    ]}                  │
+ *                                        │ ]                      │
+ *                                        └────────────────────────┘
+ *
+ * @graph Tool Call Flow
+ *
+ *   FunctionSchema[] ──▶ convertTools() ──▶ Anthropic tool format
+ *                                                   │
+ *   client.messages.create({tools, messages}) ◀─────┘
+ *                    │
+ *                    ▼
+ *   response.content[] ──▶ find type:'tool_use' ──▶ ToolCall[]
+ *                     └──▶ find type:'text'     ──▶ content string
+ *
  * @llm-note
  *   Dependencies: imports from [@anthropic-ai/sdk via dynamic require, src/types.ts] | imported by [src/llm/index.ts, src/index.ts] | tested by [tests/e2e/realProviders.test.ts]
  *   Data flow: receives Message[] + FunctionSchema[] → converts to Anthropic format (system separate, user/assistant alternating) → calls client.messages.create() → parses tool_use blocks → returns LLMResponse

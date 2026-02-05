@@ -1,5 +1,41 @@
 /**
  * @purpose LLM factory that routes model names to appropriate providers (Anthropic, OpenAI, Gemini, OpenOnion) with graceful fallback to NoopLLM
+ *
+ * @graph Model Routing Decision Tree
+ *
+ *                    createLLM(model, apiKey?)
+ *                            │
+ *                            ▼
+ *                  ┌───────────────────┐
+ *                  │ model.startsWith? │
+ *                  └─────────┬─────────┘
+ *                            │
+ *          ┌─────────┬───────┼────────┬──────────┐
+ *          ▼         ▼       ▼        ▼          ▼
+ *       "co/*"   "claude"  "gpt-"   "gemini"  (other)
+ *          │         │     / "o"      │          │
+ *          ▼         ▼       ▼        ▼          ▼
+ *    ┌──────────┐┌────────┐┌──────┐┌────────┐┌────────┐
+ *    │ OpenAI   ││Anthropic││OpenAI││ Gemini ││Anthropic│
+ *    │ +baseURL ││  LLM   ││ LLM  ││  LLM   ││(default)│
+ *    └─────┬────┘└───┬────┘└──┬───┘└───┬────┘└───┬────┘
+ *          │         │        │        │         │
+ *          └─────────┴────────┴────────┴─────────┘
+ *                            │
+ *                     on error → NoopLLM
+ *                     (descriptive message)
+ *
+ * @graph OpenOnion (co/*) URL Resolution
+ *
+ *   OPENONION_BASE_URL set? ──yes──▶ use that URL
+ *          │ no
+ *          ▼
+ *   OPENONION_DEV=1 or    ──yes──▶ http://localhost:8000/v1
+ *   ENVIRONMENT=development
+ *          │ no
+ *          ▼
+ *   https://oo.openonion.ai/v1
+ *
  * @llm-note
  *   Dependencies: imports from [src/types.ts, src/llm/openai.ts, src/llm/anthropic.ts, src/llm/gemini.ts, src/llm/noop.ts] | imported by [src/core/agent.ts, src/index.ts] | tested indirectly via agent tests
  *   Data flow: receives model string + optional apiKey → pattern matches model name (co/*, claude*, gpt-*, o*, gemini*) → instantiates provider → catches errors and returns NoopLLM with descriptive message

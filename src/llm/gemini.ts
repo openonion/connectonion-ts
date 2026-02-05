@@ -1,5 +1,35 @@
 /**
  * @purpose Google Gemini provider with function calling support and JSON prompting fallback for structured output
+ *
+ * @graph Message Format Conversion (OpenAI → Gemini)
+ *
+ *   Message[] (OpenAI-style)              Gemini API format
+ *   ┌──────────────────────┐             ┌────────────────────────┐
+ *   │ {role:'system',      │   extract   │ systemInstruction:     │
+ *   │  content:'You are..'}│ ──────────▶ │   "You are..."        │
+ *   │ {role:'user',        │   convert   │                        │
+ *   │  content:'Hello'}    │ ──────────▶ │ contents: [            │
+ *   │ {role:'assistant',   │             │   {role:'user',        │
+ *   │  content:'Hi'}       │ ──────────▶ │    parts:[{text:...}]},│
+ *   └──────────────────────┘             │   {role:'model',       │
+ *                                        │    parts:[{text:...}]} │
+ *                                        │ ]                      │
+ *                                        └────────────────────────┘
+ *
+ * @graph Tool Integration
+ *
+ *   FunctionSchema[]
+ *        │
+ *        ▼
+ *   tools: [{ functionDeclarations: [{name, description, parameters}] }]
+ *        │
+ *        ▼
+ *   client.generateContent({contents, tools, systemInstruction})
+ *        │
+ *        ▼
+ *   response.functionCall parts ──▶ ToolCall[] {name, args, id}
+ *   response.text()               ──▶ content string
+ *
  * @llm-note
  *   Dependencies: imports from [@google/generative-ai via dynamic require, src/types.ts] | imported by [src/llm/index.ts, src/index.ts] | tested by [tests/e2e/realProviders.test.ts]
  *   Data flow: receives Message[] + FunctionSchema[] → converts to Gemini format (contents array, systemInstruction separate) → calls client.generateContent() → parses functionCall parts → returns LLMResponse

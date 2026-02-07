@@ -1,9 +1,23 @@
 {
   "name": "connectonion",
-  "version": "0.0.3",
+  "version": "0.0.6",
   "description": "Connect to Python AI agents from TypeScript apps - Use powerful Python agents in your React, Next.js, Node.js, and Electron applications",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "default": "./dist/react/index.js"
+    },
+    "./dist/address-browser": {
+      "types": "./dist/address-browser.d.ts",
+      "default": "./dist/address-browser.js"
+    }
+  },
   "scripts": {
     "build": "tsc",
     "build:examples": "tsc -p tsconfig.examples.json",
@@ -37,21 +51,41 @@
     "url": "https://github.com/openonion/connectonion-ts/issues"
   },
   "homepage": "https://github.com/openonion/connectonion-ts#readme",
+  "browser": {
+    "fs": false,
+    "path": false,
+    "ws": false
+  },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.67.0",
     "@google/generative-ai": "^0.24.1",
     "dotenv": "^16.0.0",
     "openai": "^4.0.0",
-    "ws": "^8.18.0"
+    "tweetnacl": "^1.0.3",
+    "ws": "^8.18.0",
+    "zustand": "^5.0.0"
+  },
+  "peerDependencies": {
+    "react": ">=17.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
   },
   "devDependencies": {
+    "@testing-library/react": "^16.3.1",
     "@types/jest": "^29.0.0",
     "@types/node": "^20.0.0",
+    "@types/react": "^18.0.0",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
     "eslint": "^8.0.0",
     "jest": "^29.0.0",
+    "jest-environment-jsdom": "^30.2.0",
     "prettier": "^3.0.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
     "ts-jest": "^29.0.0",
     "typescript": "^5.0.0"
   },

@@ -51,7 +51,7 @@ export interface Response {
 // ============================================================================
 
 /** Chat item type */
-export type ChatItemType = 'user' | 'agent' | 'thinking' | 'tool_call' | 'ask_user' | 'approval_needed' | 'onboard_required' | 'onboard_success' | 'intent' | 'eval' | 'compact';
+export type ChatItemType = 'user' | 'agent' | 'thinking' | 'tool_call' | 'ask_user' | 'approval_needed' | 'onboard_required' | 'onboard_success' | 'intent' | 'eval' | 'compact' | 'tool_blocked';
 
 /** Chat item - data for rendering one element in chat UI */
 export type ChatItem =
@@ -65,7 +65,8 @@ export type ChatItem =
   | { id: string; type: 'onboard_success'; level: string; message: string }
   | { id: string; type: 'intent'; status: 'analyzing' | 'understood'; ack?: string; is_build?: boolean }
   | { id: string; type: 'eval'; status: 'evaluating' | 'done'; passed?: boolean; summary?: string; expected?: string; eval_path?: string }
-  | { id: string; type: 'compact'; status: 'compacting' | 'done' | 'error'; context_before?: number; context_after?: number; context_percent?: number; message?: string; error?: string };
+  | { id: string; type: 'compact'; status: 'compacting' | 'done' | 'error'; context_before?: number; context_after?: number; context_percent?: number; message?: string; error?: string }
+  | { id: string; type: 'tool_blocked'; tool: string; reason: string; message: string };
 
 // ============================================================================
 // WebSocket Types
@@ -1065,6 +1066,17 @@ export class RemoteAgent {
             existing.error = event.error as string | undefined;
           }
         }
+        break;
+      }
+
+      case 'tool_blocked': {
+        // Tool was blocked (e.g., bash file creation blocked by prefer_write_tool)
+        this._addChatItem({
+          type: 'tool_blocked',
+          tool: event.tool as string,
+          reason: event.reason as string,
+          message: event.message as string,
+        });
         break;
       }
     }

@@ -241,3 +241,15 @@ const { ui, status, input, isProcessing } = useAgent('0x...');
 **UI events:** `user`, `agent`, `thinking`, `tool_call`, `ask_user` (tool_result merged into tool_call)
 
 **One UI type = one component.** That's it.
+
+---
+
+## Related Documentation
+
+| Doc | Description |
+|-----|-------------|
+| [Getting Started](./getting-started.md) | Installation, setup, and first agent |
+| [API Reference](./api.md) | Complete class/method reference |
+| [Tools Guide](./tools.md) | Deep dive into function/class tool conversion |
+| [Examples](./examples.md) | Copy-paste ready code for real-world use cases |
+| [Troubleshooting](./troubleshooting.md) | Common issues and solutions |

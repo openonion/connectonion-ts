@@ -1,5 +1,32 @@
 /**
  * @purpose Trust-level configuration system (open/careful/strict) with environment-based defaults and prompt templates for future trust agent integration
+ *
+ * @graph Trust Level Hierarchy
+ *
+ *                       Trust Levels
+ *
+ *   ┌─────────────────────────────────────────────────────┐
+ *   │                                                     │
+ *   │   open          careful (default)      strict       │
+ *   │   ─────         ────────────────       ──────       │
+ *   │                                                     │
+ *   │   - Fast        - Verify intent       - Pre-approved│
+ *   │     iteration   - Sanity-check          agents only │
+ *   │   - Minimal       tools              - Least        │
+ *   │     checks      - Review consent       privilege    │
+ *   │   - Dev envs    - Staging/test       - Production   │
+ *   │                                                     │
+ *   │   <──── increasing restriction ────────────────>    │
+ *   │                                                     │
+ *   └─────────────────────────────────────────────────────┘
+ *
+ * @graph Trust Level Resolution
+ *
+ *   CONNECTONION_TRUST env ──set──▶ use env value
+ *          │ unset
+ *          ▼
+ *   default: 'careful'
+ *
  * @llm-note
  *   Dependencies: none (leaf node, no imports) | imported by [src/index.ts, src/core/agent.ts] | no tests yet (configuration layer)
  *   Data flow: receives trust level string or object → returns trust config with level + prompt → used by Agent constructor

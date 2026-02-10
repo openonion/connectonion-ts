@@ -1,5 +1,25 @@
 /**
  * @purpose Mock email tools for testing: write/read JSONL under ~/.connectonion/mock_email for demos and tests
+ *
+ * @graph Email Storage Model
+ *
+ *   sendEmail(to, subject, body)
+ *        │
+ *        ▼
+ *   ┌──────────────────────────────────────────────┐
+ *   │  ~/.connectonion/mock_email/emails.jsonl      │
+ *   │                                               │
+ *   │  {"id":"...","to":"alice","subject":"Hi",...} │
+ *   │  {"id":"...","to":"bob","subject":"Re",...}   │
+ *   │  {"id":"...","to":"alice","subject":"OK",...} │
+ *   │  (one JSON object per line, append-only)      │
+ *   └──────────────────────┬───────────────────────┘
+ *                          │
+ *        ┌─────────────────┼─────────────────┐
+ *        ▼                 ▼                 ▼
+ *   getEmails()      getEmails("alice")  markRead(id)
+ *   → all entries    → filtered          → rewrite file
+ *
  * @llm-note
  *   Dependencies: imports from [fs, os, path (Node.js built-ins)] | imported by [src/index.ts, tests/e2e/emailTools.test.ts] | tested by [tests/e2e/emailTools.test.ts]
  *   Data flow: sendEmail(to, subject, body) → generates id, timestamp → appends JSONL to ~/.connectonion/mock_email/emails.jsonl | getEmails(recipient?) → reads JSONL → parses entries → returns EmailEntry[]

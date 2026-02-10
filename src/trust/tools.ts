@@ -1,5 +1,31 @@
 /**
  * @purpose Trust verification tools for whitelist checks and capability testing (minimal Python parity)
+ *
+ * @graph Whitelist Check Flow
+ *
+ *   checkWhitelist(agentId)
+ *        │
+ *        ▼
+ *   ┌──────────────────────────────────┐
+ *   │  ~/.connectonion/trusted.txt     │
+ *   │                                  │
+ *   │  *              ← match all      │
+ *   │  0xabc123*      ← prefix match   │
+ *   │  0xdef456...    ← exact match    │
+ *   └──────────────┬───────────────────┘
+ *                  │
+ *        ┌─────────┴─────────┐
+ *        ▼                   ▼
+ *   "allowed"            "not found"
+ *
+ * @graph Trust Tool Integration
+ *
+ *   Trust Agent (future)
+ *        │
+ *        ├──▶ checkWhitelist(id)   → "allowed" / "not found"
+ *        ├──▶ testCapability(...)  → capability test result
+ *        └──▶ verifyAgent(id)     → verification request
+ *
  * @llm-note
  *   Dependencies: imports from [fs, os, path (Node.js built-ins)] | imported by [src/index.ts] | tested manually
  *   Data flow: checkWhitelist(agentId) → reads ~/.connectonion/trusted.txt → matches agentId against patterns (* wildcard, prefix*) → returns allow/deny string | testCapability(agentId, test, expected) → verifies expected behavior

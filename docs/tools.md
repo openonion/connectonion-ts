@@ -843,4 +843,14 @@ tools.forEach(tool => {
 });
 ```
 
-**Ready for real-world usage?** Check out [Examples](./examples.md) for complete projects and [Troubleshooting](./troubleshooting.md) for solutions to common issues!
+---
+
+## Related Documentation
+
+| Doc | Description |
+|-----|-------------|
+| [Getting Started](./getting-started.md) | Installation, setup, and first agent |
+| [API Reference](./api.md) | Complete class/method reference |
+| [Examples](./examples.md) | Copy-paste ready code for real-world use cases |
+| [Connect](./connect.md) | Remote Python agent connection via relay |
+| [Troubleshooting](./troubleshooting.md) | Common issues and solutions |

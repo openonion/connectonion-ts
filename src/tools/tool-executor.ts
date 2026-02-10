@@ -1,5 +1,45 @@
 /**
  * @purpose Standalone tool executor with detailed trace entry creation for timing, status, and error tracking (migrated from Python tool_executor.py)
+ *
+ * @graph Tool Execution & Trace Recording
+ *
+ *   executeSingleTool(name, args, id, toolMap)
+ *        │
+ *        ▼
+ *   ┌──────────────┐    ┌───────────────────────────────────────┐
+ *   │ toolMap.get() │───▶│ Found?                                │
+ *   └──────────────┘    └───────┬──────────────┬────────────────┘
+ *                            Yes│              │No
+ *                               ▼              ▼
+ *                    ┌──────────────┐   TraceEntry {
+ *                    │  START timer │     status: 'not_found'
+ *                    │  Date.now()  │   }
+ *                    └──────┬───────┘
+ *                           │
+ *                           ▼
+ *                    ┌──────────────┐
+ *                    │ tool.run(args)│
+ *                    └──────┬───────┘
+ *                      ┌────┴─────┐
+ *                      ▼          ▼
+ *                   success     error
+ *                      │          │
+ *                      ▼          ▼
+ *                    STOP timer (Date.now() - start)
+ *                      │          │
+ *                      ▼          ▼
+ *                  TraceEntry { TraceEntry {
+ *                   status:     status: 'error',
+ *                   'success',  error: msg,
+ *                   result,     error_type
+ *                   timing      }
+ *                  }
+ *
+ * @graph Batch Execution (executeAndRecordTools)
+ *
+ *   toolCalls[] ──▶ for each ──▶ executeSingleTool() ──▶ TraceEntry[]
+ *                   (sequential)
+ *
  * @llm-note
  *   Dependencies: imports from [src/types.ts (Tool), src/console.ts (Console)] | imported by [src/console.ts, examples/test-migrations.ts] | tested by [examples/test-migrations.ts]
  *   Data flow: receives toolName, toolArgs, toolMap from Agent → executes tool.run(args) → measures timing → creates TraceEntry{type, tool_name, arguments, call_id, timing, status, result, iteration, timestamp} → returns to caller

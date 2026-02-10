@@ -1,5 +1,61 @@
 /**
  * @purpose Auto-convert TypeScript functions and class methods into Agent-compatible Tool objects with schema generation
+ *
+ * @graph Tool Conversion Pipeline
+ *
+ *   processTools(tools[])
+ *          │
+ *          ▼
+ *   ┌──────────────────────────────────────────────────────┐
+ *   │  For each item in tools[]:                           │
+ *   │                                                      │
+ *   │   ┌──────────────┐                                   │
+ *   │   │ typeof item?  │                                   │
+ *   │   └──────┬───────┘                                   │
+ *   │     ┌────┼──────────────┐                            │
+ *   │     ▼    ▼              ▼                            │
+ *   │  Function  Tool obj   Class instance                 │
+ *   │     │      (has run)      │                          │
+ *   │     ▼      │              ▼                          │
+ *   │  createTool│     extractMethodsFromInstance()        │
+ *   │  FromFunc()│        │                                │
+ *   │     │      │        ▼                                │
+ *   │     │      │     For each public method:             │
+ *   │     │      │       createToolFromFunction()          │
+ *   │     │      │       + bind(this)                      │
+ *   │     └──────┴────────┘                                │
+ *   │            │                                         │
+ *   │            ▼                                         │
+ *   │     Tool { name, description, run(), schema() }     │
+ *   └──────────────────────────────────────────────────────┘
+ *
+ * @graph Function → Schema Extraction
+ *
+ *   func.toString()
+ *        │
+ *        ▼
+ *   ┌────────────────┐    ┌───────────────┐    ┌──────────────┐
+ *   │ Extract name   │───▶│ Extract JSDoc │───▶│ Parse params │
+ *   │ func.name      │    │ via regex     │    │ name: type   │
+ *   └────────────────┘    └───────────────┘    └──────┬───────┘
+ *                                                     │
+ *                                                     ▼
+ *                                              ┌──────────────┐
+ *                                              │  TYPE_MAP    │
+ *                                              │  string→str  │
+ *                                              │  number→num  │
+ *                                              │  boolean→bool│
+ *                                              └──────┬───────┘
+ *                                                     │
+ *                                                     ▼
+ *                                              FunctionSchema {
+ *                                                name, description,
+ *                                                parameters: {
+ *                                                  type: 'object',
+ *                                                  properties: {...}
+ *                                                }
+ *                                              }
+ *
  * @llm-note
  *   Dependencies: imports from [../types] | imported by [src/core/agent.ts, src/index.ts] | tested by [tests/agent.test.ts, examples/test-migrations.ts]
  *   Data flow: receives func: Function or class instance → inspects with func.toString() → extracts name/JSDoc/params via regex → maps types via TYPE_MAP → returns Tool with run(), toFunctionSchema()

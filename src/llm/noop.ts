@@ -1,5 +1,19 @@
 /**
  * @purpose Graceful fallback LLM that throws descriptive errors when no valid provider is configured or API keys are missing
+ *
+ * @graph NoopLLM in Factory Pattern
+ *
+ *   createLLM("claude-*")
+ *        │
+ *        ▼
+ *   new AnthropicLLM() ──catch──▶ new NoopLLM("Anthropic requires...")
+ *        │                               │
+ *     success                     agent.input() later
+ *        │                               │
+ *        ▼                               ▼
+ *   LLM works                    throw Error(reason)
+ *   normally                     (descriptive message)
+ *
  * @llm-note
  *   Dependencies: imports from [src/types.ts (LLM, LLMResponse, Message, FunctionSchema)] | imported by [src/llm/index.ts] | no tests (error handler)
  *   Data flow: receives messages/tools → immediately throws Error with reason string → no actual LLM communication

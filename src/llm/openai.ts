@@ -1,5 +1,44 @@
 /**
  * @purpose OpenAI LLM provider with support for GPT models, O-series models, and OpenOnion managed keys via configurable baseURL
+ *
+ * @graph API Request Flow
+ *
+ *   Message[] + FunctionSchema[]
+ *        │
+ *        ▼
+ *   convertMessages() ──▶ OpenAI message format
+ *        │
+ *        ▼
+ *   ┌─────────────────────────────────────────────┐
+ *   │  client.chat.completions.create({           │
+ *   │    model,                                   │
+ *   │    messages,                                │
+ *   │    tools: [{type:'function', function:...}],│
+ *   │    tool_choice: 'auto'                      │
+ *   │  })                                         │
+ *   └────────────────────┬────────────────────────┘
+ *                        │
+ *              ┌─────────┴──────────┐
+ *              ▼                    ▼
+ *        message.content     message.tool_calls[]
+ *              │                    │
+ *              ▼                    ▼
+ *        LLMResponse {        ToolCall[] {
+ *          content,             name, args, id
+ *          toolCalls          }
+ *        }
+ *
+ * @graph BaseURL Override (co/* models)
+ *
+ *   options.baseURL ──set──▶ use options.baseURL
+ *        │ unset
+ *        ▼
+ *   OPENAI_BASE_URL or   ──set──▶ use env URL
+ *   OPENONION_BASE_URL
+ *        │ unset
+ *        ▼
+ *   https://api.openai.com (default)
+ *
  * @llm-note
  *   Dependencies: imports from [openai npm package, src/types.ts] | imported by [src/llm/index.ts, src/index.ts] | tested by [tests/e2e/realProviders.test.ts]
  *   Data flow: receives Message[] + FunctionSchema[] → converts to OpenAI format → calls client.chat.completions.create() → parses tool_calls → returns LLMResponse

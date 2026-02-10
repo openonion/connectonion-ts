@@ -1,30 +1,56 @@
 /**
  * @purpose Client for connecting to remote agents via WebSocket with automatic keep-alive, session recovery, and polling fallback
+ *
+ * @graph Connection Modes
+ *
+ *   connect('0xAddr', options?)
+ *        │
+ *        ├── directUrl set? ──yes──▶ Direct: wss://{directUrl}/ws
+ *        │
+ *        ├── resolveEndpoint()? ──found──▶ Direct: resolved wsUrl
+ *        │
+ *        └── fallback ──▶ Relay: {relayUrl}/ws/input
+ *
+ * @graph Remote Agent Communication Flow
+ *
+ *   Client (TS)                       Relay / Agent
+ *        │                                │
+ *        │  connect('0xAddr')             │
+ *        │  ──▶ RemoteAgent               │
+ *        │  (lazy-load Ed25519 keys)      │
+ *        │                                │
+ *        │  agent.input("prompt")         │
+ *        │  ──▶ WebSocket open ─────────▶ │
+ *        │      INPUT{prompt, sig, to}    │  ──▶ agent processes
+ *        │                                │
+ *        │  ◀── PING ◀───────────────── │  (every 30s keep-alive)
+ *        │  ──▶ PONG ──────────────────▶ │
+ *        │                                │
+ *        │  ◀── stream events ◀──────── │  (thinking, tool_call,
+ *        │      (update agent.ui[])       │   tool_result, assistant)
+ *        │                                │
+ *        │  ◀── OUTPUT{result, session} ◀ │
+ *        │  ws.close()                    │
+ *        ▼                                ▼
+ *
+ * @graph Recovery Flow (on disconnect/timeout)
+ *
+ *   WebSocket fails
+ *        │
+ *        ▼
+ *   Poll GET /sessions/{session_id} (every 10s)
+ *        │
+ *        ├── status: "running" ──▶ retry poll
+ *        ├── status: "done"    ──▶ return result
+ *        └── 404 / max attempts ──▶ throw Error
+ *
  * @llm-note
  *   Dependencies: imports from [src/address.ts (AddressData, generate, load, sign, etc.), src/types.ts (SessionStatus)] | imported by [src/index.ts, src/react/index.ts, examples/connect-example.ts, tests/connect.test.ts] | tested by [tests/connect.test.ts]
  *   Data flow: connect(address, options) → creates RemoteAgent → agent.input(prompt) → generates session_id (UUID) → saves to localStorage → opens WebSocket → sends INPUT{type, input_id, to, prompt, session{session_id}, signature?} → receives PING every 30s, responds with PONG → receives stream events (tool_call, tool_result, thinking, assistant) → receives OUTPUT{result, session_id, session} → clears localStorage → returns Response{text, done} | On disconnect/timeout: polls GET /sessions/{session_id} every 10s until result ready
  *   State/Effects: opens WebSocket connections | sends signed/unsigned messages | updates internal UI events array | syncs session from server | generates/loads Ed25519 keys | saves keys to localStorage (browser) or .co/keys/ (Node.js) | saves active session_id to localStorage for recovery | polls server via HTTP fetch on connection failure | health check interval detects dead connections
  *   Integration: exposes connect(address, options), RemoteAgent class, Response, ChatItem types, AgentStatus, ConnectOptions{enablePolling, pollIntervalMs, maxPollAttempts} | supports relay mode (wss://oo.openonion.ai) and direct mode (deployed agent URL) | Ed25519 signing for authentication | session persistence across calls | automatic recovery from network failures, timeouts, page refreshes
- *   Performance: 600s timeout default (10 min, up from 180s) | real-time WebSocket streaming | parallel tool execution on agent side | no client-side caching | auto-generates keys if missing | PING/PONG keep-alive every 30s | health check every 10s | polling fallback on failures | results persist 24h server-side
- *   Errors: throws on timeout (600s default) after polling exhausted | throws on WebSocket errors after polling attempt | throws on connection close after polling attempt | throws on ERROR messages from server | throws if session expired (404) during polling | includes error context in messages | graceful fallback to polling prevents data loss
- *
- * Architecture:
- *   Normal Flow:
- *     Client → /ws/input → Relay → Agent → OUTPUT → Relay → Client
- *
- *   Keep-Alive:
- *     Server sends PING every 30s → Client responds PONG → Health check every 10s
- *
- *   Recovery Flow (on disconnect/timeout):
- *     WebSocket fails → Poll GET /sessions/{session_id} every 10s → Status="done" → Return result
- *
- * Related Files:
- *   - oo-api/relay/routes.py: Relay server WebSocket endpoints
- *   - connectonion/network/connect.py: Python equivalent of this file
- *   - connectonion/network/asgi/websocket.py: Server-side PING sender
- *   - connectonion/network/host/session.py: SessionStorage for 24h TTL
- *   - src/react/index.ts: useAgent hook built on RemoteAgent
- *   - src/types.ts: SessionStatus, PollResult interfaces
+ *   Performance: 600s timeout default (10 min) | real-time WebSocket streaming | PING/PONG keep-alive every 30s | health check every 10s | polling fallback on failures | results persist 24h server-side
+ *   Errors: throws on timeout (600s default) after polling exhausted | throws on WebSocket errors after polling attempt | throws on connection close after polling attempt | throws on ERROR messages from server | throws if session expired (404) during polling | graceful fallback to polling prevents data loss
  */
 
 import * as address from './address';

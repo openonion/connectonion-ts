@@ -205,7 +205,98 @@ While we recommend building agents in Python, you can also build simple agents d
 
 If you encounter bugs building agents in TypeScript, please [report them on GitHub](https://github.com/openonion/connectonion-ts/issues).
 
-## 🏗️ Project Structure
+## 🏗️ Architecture
+
+### System Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    ConnectOnion TypeScript SDK                    │
+│                                                                  │
+│  ┌──────────────┐  ┌──────────────┐  ┌────────────────────────┐ │
+│  │    Agent      │  │   connect()  │  │      llmDo()           │ │
+│  │  (local AI)   │  │  (remote)    │  │  (one-shot LLM call)   │ │
+│  └──────┬───────┘  └──────┬───────┘  └────────────┬───────────┘ │
+│         │                 │                        │             │
+│         ▼                 ▼                        │             │
+│  ┌─────────────────────────────┐                   │             │
+│  │        LLM Factory          │◀──────────────────┘             │
+│  │      createLLM(model)       │                                 │
+│  └──────────┬──────────────────┘                                 │
+│     ┌───────┼──────────┬────────────┐                            │
+│     ▼       ▼          ▼            ▼                            │
+│  Anthropic  OpenAI   Gemini    OpenOnion                         │
+│  (claude-*) (gpt-*)  (gemini-*) (co/*)                          │
+│                                                                  │
+│  ┌──────────────┐  ┌──────────┐  ┌───────────┐  ┌───────────┐  │
+│  │  Tool System  │  │  Trust   │  │  Console  │  │   Xray    │  │
+│  │  func→schema  │  │  Levels  │  │  Logging  │  │  Debugger │  │
+│  └──────────────┘  └──────────┘  └───────────┘  └───────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Agent Execution Flow
+
+```
+  agent.input("What is 2+2?")
+       │
+       ▼
+  ┌─────────────────┐
+  │  Init messages   │  [system prompt] + [user message]
+  └────────┬────────┘
+           │
+           ▼
+  ┌─────────────────────────────────────┐
+  │        Main Loop (max 10 iter)       │
+  │                                      │
+  │  LLM.complete(messages, tools)       │
+  │       │                              │
+  │       ├── No tool calls ──▶ EXIT     │
+  │       │                              │
+  │       └── Tool calls found:          │
+  │            Promise.all(              │
+  │              tool_1.run(args),       │
+  │              tool_2.run(args)        │
+  │            )                         │
+  │            │                         │
+  │            ▼                         │
+  │       Append results → LOOP          │
+  └─────────────────────────────────────┘
+       │
+       ▼
+  Return final text response
+```
+
+### Tool Conversion
+
+```
+  Your code                        SDK internals
+
+  function add(a: number,          Tool {
+    b: number): number {    ──▶      name: "add",
+    return a + b;                    description: "...",
+  }                                  run(args) → add(a, b),
+                                     toFunctionSchema() → {
+  class API {                          type: "object",
+    search(q: string) {}   ──▶        properties: {a: {type: "number"}, ...}
+    fetch(id: number) {}             }
+  }                                }
+```
+
+### LLM Provider Routing
+
+```
+  createLLM(model)
+       │
+       ├── "co/*"     ──▶ OpenAI LLM + OpenOnion baseURL
+       ├── "claude-*"  ──▶ Anthropic LLM (default)
+       ├── "gpt-*"     ──▶ OpenAI LLM
+       ├── "o*"        ──▶ OpenAI LLM
+       ├── "gemini-*"  ──▶ Gemini LLM
+       └── (unknown)   ──▶ Anthropic (fallback) or NoopLLM
+```
+
+### Project Structure
 
 ```
 your-project/
@@ -216,6 +307,34 @@ your-project/
 ├── .env               # API keys (never commit!)
 ├── package.json
 └── tsconfig.json
+```
+
+### SDK Internal Structure
+
+```
+src/
+├── core/
+│   └── agent.ts            # Main Agent class (orchestrator)
+├── llm/
+│   ├── index.ts            # LLM factory (routes model names)
+│   ├── anthropic.ts        # Anthropic Claude provider (default)
+│   ├── openai.ts           # OpenAI GPT/O-series provider
+│   ├── gemini.ts           # Google Gemini provider
+│   ├── noop.ts             # Fallback for missing config
+│   └── llm-do.ts           # One-shot llmDo() helper
+├── tools/
+│   ├── tool-utils.ts       # Function → Tool conversion
+│   ├── tool-executor.ts    # Execution + trace recording
+│   ├── xray.ts             # Debug context injection (@xray)
+│   ├── replay.ts           # Replay decorator for debugging
+│   └── email.ts            # Mock email tools for demos/tests
+├── trust/
+│   ├── index.ts            # Trust levels (open/careful/strict)
+│   └── tools.ts            # Whitelist checks & verification
+├── connect.ts              # Remote agent connection via relay
+├── console.ts              # Dual logging (stderr + file)
+├── types.ts                # Core TypeScript interfaces
+└── index.ts                # Public API exports
 ```
 
 ---

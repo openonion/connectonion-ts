@@ -1,12 +1,32 @@
 /**
  * @purpose Mock email tools for testing: write/read JSONL under ~/.connectonion/mock_email for demos and tests
+ *
+ * @graph Email Storage Model
+ *
+ *   sendEmail(to, subject, body)
+ *        │
+ *        ▼
+ *   ┌──────────────────────────────────────────────┐
+ *   │  ~/.connectonion/mock_email/emails.jsonl      │
+ *   │                                               │
+ *   │  {"id":"...","to":"alice","subject":"Hi",...} │
+ *   │  {"id":"...","to":"bob","subject":"Re",...}   │
+ *   │  {"id":"...","to":"alice","subject":"OK",...} │
+ *   │  (one JSON object per line, append-only)      │
+ *   └──────────────────────┬───────────────────────┘
+ *                          │
+ *        ┌─────────────────┼─────────────────┐
+ *        ▼                 ▼                 ▼
+ *   getEmails()      getEmails("alice")  markRead(id)
+ *   → all entries    → filtered          → rewrite file
+ *
  * @llm-note
- *   Dependencies: imports from [fs, os, path (Node.js built-ins)] | imported by [src/index.ts] | tested by manual demos
- *   Data flow: sendEmail(to, subject, body) → generates id, timestamp → appends JSONL to ~/.connectonion/mock_email/emails.jsonl | readInbox() → reads JSONL → parses entries → returns EmailEntry[]
- *   State/Effects: writes to ~/.connectonion/mock_email/emails.jsonl | creates directory if missing | appends to file without locking | reads entire file on readInbox()
- *   Integration: exposes sendEmail(to, subject, body), readInbox(), EmailEntry type | server-only utilities (uses fs) | CONNECTONION_HOME env var for base directory override
+ *   Dependencies: imports from [fs, os, path (Node.js built-ins)] | imported by [src/index.ts] | tested by [tests/e2e/emailTools.test.ts]
+ *   Data flow: sendEmail(to, subject, body) → generates id, timestamp → appends JSONL to ~/.connectonion/mock_email/emails.jsonl | getEmails(recipient?) → reads JSONL → parses entries → returns EmailEntry[]
+ *   State/Effects: writes to ~/.connectonion/mock_email/emails.jsonl | creates directory if missing | appends to file without locking | reads entire file on getEmails()
+ *   Integration: exposes sendEmail(to, subject, body), getEmails(recipient?), markRead(id), EmailEntry type | server-only utilities (uses fs) | CONNECTONION_HOME env var for base directory override
  *   Performance: synchronous fs operations | no file locking | reads entire file into memory | appends with fs.appendFileSync
- *   Errors: throws on fs errors (ENOENT, EACCES) | invalid JSONL lines skipped silently in readInbox()
+ *   Errors: throws on fs errors (ENOENT, EACCES) | markRead rewrites entire file
  */
 import * as fs from 'fs';
 import * as os from 'os';

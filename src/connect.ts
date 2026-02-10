@@ -1,7 +1,50 @@
 /**
- * Connect to remote agents via the relay network.
+ * @purpose Connect to remote Python agents via WebSocket relay network, enabling cross-language agent communication
  *
- * Mirrors Python SDK connect(): returns a RemoteAgent proxy with input().
+ * @graph Remote Agent Connection Flow
+ *
+ *   TypeScript App                    Relay Server                Python Agent
+ *        │                                │                           │
+ *        │  connect('0xAddr')             │                           │
+ *        │  ──▶ RemoteAgent               │                           │
+ *        │                                │                           │
+ *        │  agent.input("prompt")         │                           │
+ *        │  ──▶ WebSocket connect ──────▶ │                           │
+ *        │      {type:'INPUT',            │  ──▶ forward to agent ──▶ │
+ *        │       to:'0xAddr',             │                           │
+ *        │       prompt:'...'}            │                           │
+ *        │                                │                           │
+ *        │                                │  ◀── agent response ◀──  │
+ *        │  ◀── {type:'OUTPUT',  ◀──────  │                           │
+ *        │       result:'...'}            │                           │
+ *        │                                │                           │
+ *        │  ws.close()                    │                           │
+ *        ▼                                ▼                           ▼
+ *
+ * @graph WebSocket Resolution
+ *
+ *   globalThis.WebSocket? ──yes──▶ use browser WebSocket
+ *        │ no
+ *        ▼
+ *   require('ws')? ──yes──▶ use Node.js 'ws' package
+ *        │ no
+ *        ▼
+ *   throw Error("Install 'ws'")
+ *
+ * @graph Relay URL Resolution
+ *
+ *   RELAY_URL env? ──set──▶ use env value
+ *        │ unset
+ *        ▼
+ *   wss://oo.openonion.ai/ws/announce (production default)
+ *
+ * @llm-note
+ *   Dependencies: imports from [node:crypto] | imported by [src/index.ts] | tested by [tests/e2e/, CONNECT_TEST_REPORT.md]
+ *   Data flow: connect(address, relayUrl?) → new RemoteAgent → .input(prompt) → WebSocket open → send JSON INPUT → await JSON OUTPUT → close → return result string
+ *   State/Effects: opens WebSocket connection per input() call | reads RELAY_URL env | uses crypto.randomUUID for input IDs | auto-closes on response/error/timeout
+ *   Integration: exposes connect(address, relayUrl?, wsCtor?), RemoteAgent class | RemoteAgent.input(prompt, timeoutMs?) returns Promise<string> | default timeout 30s
+ *   Performance: one WebSocket connection per input() call (no pooling) | timeout configurable (default 30s)
+ *   Errors: timeout → 'Connection timed out' | ws error → 'WebSocket error' | close before response → 'Connection closed before response' | missing ws → install instructions
  */
 
 import crypto from 'crypto';

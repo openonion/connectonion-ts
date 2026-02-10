@@ -61,3 +61,15 @@ npm i ws
 ```
 
 The SDK auto-detects global `WebSocket` (browser) or falls back to `ws` (Node). If neither is available, it throws a helpful error.
+
+---
+
+## Related Documentation
+
+| Doc | Description |
+|-----|-------------|
+| [Getting Started](./getting-started.md) | Installation, setup, and first agent |
+| [API Reference](./api.md) | Complete class/method reference |
+| [Tools Guide](./tools.md) | Deep dive into function/class tool conversion |
+| [Examples](./examples.md) | Copy-paste ready code for real-world use cases |
+| [Troubleshooting](./troubleshooting.md) | Common issues and solutions |

@@ -1,10 +1,36 @@
 /**
  * @purpose Trust verification tools for whitelist checks and capability testing (minimal Python parity)
+ *
+ * @graph Whitelist Check Flow
+ *
+ *   checkWhitelist(agentId)
+ *        │
+ *        ▼
+ *   ┌──────────────────────────────────┐
+ *   │  ~/.connectonion/trusted.txt     │
+ *   │                                  │
+ *   │  *              ← match all      │
+ *   │  0xabc123*      ← prefix match   │
+ *   │  0xdef456...    ← exact match    │
+ *   └──────────────┬───────────────────┘
+ *                  │
+ *        ┌─────────┴─────────┐
+ *        ▼                   ▼
+ *   "allowed"            "not found"
+ *
+ * @graph Trust Tool Integration
+ *
+ *   Trust Agent (future)
+ *        │
+ *        ├──▶ checkWhitelist(id)   → "allowed" / "not found"
+ *        ├──▶ testCapability(...)  → capability test result
+ *        └──▶ verifyAgent(id)     → verification request
+ *
  * @llm-note
  *   Dependencies: imports from [fs, os, path (Node.js built-ins)] | imported by [src/index.ts] | tested manually
  *   Data flow: checkWhitelist(agentId) → reads ~/.connectonion/trusted.txt → matches agentId against patterns (* wildcard, prefix*) → returns allow/deny string | testCapability(agentId, test, expected) → verifies expected behavior
  *   State/Effects: reads ~/.connectonion/trusted.txt synchronously | throws on missing file | no writes
- *   Integration: exposes checkWhitelist(agentId), testCapability(agentId, test, expected) | can be added as tools to trust agents | supports '*' for all and 'prefix*' for wildcards
+ *   Integration: exposes checkWhitelist(agentId), testCapability(agentId, test, expected), verifyAgent(agentId, agentInfo?) | can be added as tools to trust agents | supports '*' for all and 'prefix*' for wildcards
  *   Performance: reads entire trusted.txt file per check | no caching | synchronous fs.readFileSync
  *   Errors: throws if ~/.connectonion/trusted.txt missing | pattern matching via string operations
  */

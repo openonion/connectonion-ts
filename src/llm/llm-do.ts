@@ -1,5 +1,37 @@
 /**
  * @purpose Simple one-shot completion helper for quick LLM queries without creating an Agent (Python parity with llm_do)
+ *
+ * @graph llmDo Flow
+ *
+ *   llmDo(prompt, opts?)
+ *        │
+ *        ▼
+ *   ┌───────────────────────────┐
+ *   │ Build messages:           │
+ *   │  [system?] + [user]      │
+ *   └────────────┬──────────────┘
+ *                │
+ *                ▼
+ *   ┌───────────────────────────┐
+ *   │ createLLM(model, apiKey)  │
+ *   │         │                 │
+ *   │         ▼                 │
+ *   │ llm.complete(messages)    │
+ *   └────────────┬──────────────┘
+ *                │
+ *                ▼
+ *   return response.content ?? ''
+ *
+ *   vs Agent (full orchestrator):
+ *   ┌─────────────────────────────────────────┐
+ *   │  llmDo         │  Agent                 │
+ *   │  ───────        │  ─────                 │
+ *   │  One-shot       │  Multi-turn            │
+ *   │  No tools       │  Tools + parallel exec │
+ *   │  No history     │  Persistent messages   │
+ *   │  Text only      │  Full LLMResponse      │
+ *   └─────────────────────────────────────────┘
+ *
  * @llm-note
  *   Dependencies: imports from [./index (createLLM), ../types] | imported by [src/index.ts] | tested by manual examples
  *   Data flow: receives prompt: string + options → creates messages array with optional system → calls createLLM(model).complete(messages) → returns response.content string

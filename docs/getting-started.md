@@ -24,10 +24,10 @@ Connect to Python agents from TypeScript in **60 seconds** - we timed it!
 npm install connectonion
 
 # Using yarn
-yarn add connectonion-ts
+yarn add connectonion
 
 # Using pnpm
-pnpm add connectonion-ts
+pnpm add connectonion
 ```
 
 ### TypeScript Setup (if needed)
@@ -477,6 +477,18 @@ Now that you understand the basics, try building:
 - A DevOps automation tool
 
 The possibilities are endless! 🌟
+
+---
+
+## Related Documentation
+
+| Doc | Description |
+|-----|-------------|
+| [API Reference](./api.md) | Complete class/method reference |
+| [Tools Guide](./tools.md) | Deep dive into function/class tool conversion |
+| [Examples](./examples.md) | Copy-paste ready code for real-world use cases |
+| [Connect](./connect.md) | Remote Python agent connection via relay |
+| [Troubleshooting](./troubleshooting.md) | Common issues and solutions |
 
 ---
 

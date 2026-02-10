@@ -164,27 +164,35 @@ CONNECTONION_LOG=./my-agent.log # Override default log path
 ```
 src/
 ├── core/
-│   └── agent.ts          # Main Agent class
+│   └── agent.ts          # Main Agent class (orchestrator)
 ├── llm/
 │   ├── index.ts          # LLM factory (routes model names)
-│   ├── openai.ts         # OpenAI provider
-│   ├── anthropic.ts      # Anthropic provider
+│   ├── openai.ts         # OpenAI GPT/O-series provider
+│   ├── anthropic.ts      # Anthropic Claude provider (default)
 │   ├── gemini.ts         # Google Gemini provider
-│   └── noop.ts           # No-op provider for errors
+│   ├── noop.ts           # Fallback for missing config
+│   └── llm-do.ts         # One-shot llmDo() helper
 ├── tools/
 │   ├── tool-utils.ts     # Function-to-tool conversion
-│   ├── tool-executor.ts  # Tool execution helpers
-│   └── xray.ts           # Debugger breakpoint utilities
+│   ├── tool-executor.ts  # Tool execution + trace recording
+│   ├── xray.ts           # Debug context injection (@xray)
+│   ├── replay.ts         # Replay decorator for debugging
+│   └── email.ts          # Mock email tools for demos/tests
 ├── trust/
-│   └── index.ts          # Trust system
-├── history/
-│   └── index.ts          # Behavior tracking
-├── console.ts            # Dual logging system
+│   ├── index.ts          # Trust levels (open/careful/strict)
+│   └── tools.ts          # Whitelist checks & verification
+├── connect.ts            # Remote agent connection via relay
+├── console.ts            # Dual logging (stderr + file)
 ├── types.ts              # All TypeScript interfaces
 └── index.ts              # Public API exports
 
 tests/
-└── agent.test.ts         # Agent tests with MockLLM
+├── agent.test.ts         # Agent tests with MockLLM
+├── tools.test.ts         # Tool system tests
+└── e2e/
+    ├── emailTools.test.ts    # Email tools tests
+    ├── exampleAgent.test.ts  # Example agent integration
+    └── realProviders.test.ts # Real LLM provider tests
 
 examples/
 ├── basic-agent.ts        # Simple agent example

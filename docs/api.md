@@ -163,21 +163,22 @@ interface AgentConfig {
   llm?: LLM;                      // Optional: Custom LLM provider
   tools?: Tool[] | Function[] | any[];  // Optional: Array of tools
   systemPrompt?: string;          // Optional: System instruction
-  apiKey?: string;                // Optional: OpenAI API key
-  model?: string;                 // Optional: Model name (default: 'gpt-4o-mini')
+  apiKey?: string;                // Optional: LLM provider API key
+  model?: string;                 // Optional: Model name (default: 'claude-3-5-sonnet-20241022')
   maxIterations?: number;         // Optional: Max tool iterations (default: 10)
   trust?: string | any;           // Optional: Trust relationship
+  log?: boolean | string;         // Optional: Log file path or toggle
 }
 ```
 
 **Field Details:**
 
 - **`name`**: Unique identifier for the agent.
-- **`llm`**: Custom LLM provider implementing the `LLM` interface. Defaults to OpenAI.
+- **`llm`**: Custom LLM provider implementing the `LLM` interface. Defaults to Anthropic Claude.
 - **`tools`**: Can be functions, class instances, or objects implementing the `Tool` interface.
 - **`systemPrompt`**: Instructions that guide the agent's behavior and personality.
-- **`apiKey`**: OpenAI API key. If not provided, uses `OPENAI_API_KEY` environment variable.
-- **`model`**: OpenAI model name. Supports all chat completion models.
+- **`apiKey`**: LLM provider API key. If not provided, uses `ANTHROPIC_API_KEY` (default) or other provider env vars.
+- **`model`**: Model name. Default is `claude-3-5-sonnet-20241022`. Also supports `gpt-*`, `o*`, `gemini-*`, and `co/*` prefixes.
 - **`maxIterations`**: Prevents infinite loops in tool calling scenarios.
 
 ### Tool
@@ -617,8 +618,9 @@ For best results, use these TypeScript compiler options:
 - Add JSDoc comments for better tool descriptions
 
 ### 2. **Model Selection**
-- Use `gpt-4o-mini` for most use cases (faster, cheaper)
-- Use `gpt-4o` only when you need maximum reasoning capability
+- Use `claude-3-5-sonnet-20241022` (default) for balanced speed and quality
+- Use `gpt-4o-mini` or `gemini-1.5-flash` for faster, cheaper tasks
+- Use `co/*` models for OpenOnion managed keys (no API key setup needed)
 - Consider using different models for different agents
 
 ### 3. **Conversation Management**
@@ -631,4 +633,14 @@ For best results, use these TypeScript compiler options:
 - Handle errors gracefully within tools
 - Use async tools for I/O operations
 
-**Ready to dive deeper?** Check out the [Tools Guide](./tools.md) for advanced tool patterns and [Troubleshooting](./troubleshooting.md) for common issues and solutions.
+---
+
+## Related Documentation
+
+| Doc | Description |
+|-----|-------------|
+| [Getting Started](./getting-started.md) | Installation, setup, and first agent |
+| [Tools Guide](./tools.md) | Deep dive into function/class tool conversion |
+| [Examples](./examples.md) | Copy-paste ready code for real-world use cases |
+| [Connect](./connect.md) | Remote Python agent connection via relay |
+| [Troubleshooting](./troubleshooting.md) | Common issues and solutions |

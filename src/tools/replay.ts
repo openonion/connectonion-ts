@@ -1,5 +1,37 @@
 /**
  * @purpose Replay decorator for re-executing last tool call with modified arguments during debugging (parity with Python @replay)
+ *
+ * @graph Replay Mechanism
+ *
+ *   ┌─────────────────────────────────────────────────┐
+ *   │  withReplay(originalFunc) → wrappedFunc          │
+ *   │                                                  │
+ *   │  1. Extract param names via regex                │
+ *   │  2. On each call:                                │
+ *   │     ┌──────────────────────────────────────┐    │
+ *   │     │ lastCall = {                          │    │
+ *   │     │   func: originalFunc,                 │    │
+ *   │     │   thisArg,                            │    │
+ *   │     │   argsArray: [arg1, arg2, ...],       │    │
+ *   │     │   paramNames: ['a', 'b', ...]         │    │
+ *   │     │ }                                     │    │
+ *   │     └──────────────────────────────────────┘    │
+ *   │  3. Execute originalFunc.apply(this, args)       │
+ *   └─────────────────────────────────────────────────┘
+ *
+ *   replay({ b: 99 })
+ *        │
+ *        ▼
+ *   ┌────────────────────────────────────────┐
+ *   │ Merge overrides with previous args:    │
+ *   │   paramNames: ['a',  'b']              │
+ *   │   previous:   [1,    2]                │
+ *   │   overrides:  {b: 99}                  │
+ *   │   result:     [1,    99]  ◀── merged   │
+ *   │                                        │
+ *   │ Re-run: func.apply(thisArg, [1, 99])   │
+ *   └────────────────────────────────────────┘
+ *
  * @llm-note
  *   Dependencies: none (leaf node) | imported by [src/index.ts] | tested by interactive debug sessions
  *   Data flow: withReplay decorator wraps function → captures func, thisArg, argsArray, paramNames on each call → stores in module-scoped lastCall → replay(overrides) re-runs with merged arguments

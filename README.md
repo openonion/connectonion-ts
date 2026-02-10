@@ -317,18 +317,22 @@ src/
 │   └── agent.ts            # Main Agent class (orchestrator)
 ├── llm/
 │   ├── index.ts            # LLM factory (routes model names)
-│   ├── anthropic.ts        # Anthropic Claude provider
+│   ├── anthropic.ts        # Anthropic Claude provider (default)
 │   ├── openai.ts           # OpenAI GPT/O-series provider
 │   ├── gemini.ts           # Google Gemini provider
-│   └── noop.ts             # Fallback for missing config
+│   ├── noop.ts             # Fallback for missing config
+│   └── llm-do.ts           # One-shot llmDo() helper
 ├── tools/
 │   ├── tool-utils.ts       # Function → Tool conversion
 │   ├── tool-executor.ts    # Execution + trace recording
-│   └── xray.ts             # Debug context injection
+│   ├── xray.ts             # Debug context injection (@xray)
+│   ├── replay.ts           # Replay decorator for debugging
+│   └── email.ts            # Mock email tools for demos/tests
 ├── trust/
-│   └── index.ts            # Trust levels (open/careful/strict)
+│   ├── index.ts            # Trust levels (open/careful/strict)
+│   └── tools.ts            # Whitelist checks & verification
+├── connect.ts              # Remote agent connection via relay
 ├── console.ts              # Dual logging (stderr + file)
-├── connect.ts              # Remote agent connection
 ├── types.ts                # Core TypeScript interfaces
 └── index.ts                # Public API exports
 ```

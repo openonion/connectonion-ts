@@ -1,12 +1,12 @@
 /**
  * @purpose Standalone tool executor with detailed trace entry creation for timing, status, and error tracking (migrated from Python tool_executor.py)
  * @llm-note
- *   Dependencies: imports from [../types, ../console] | imported by [src/core/agent.ts (planned)] | tested by [examples/test-migrations.ts]
+ *   Dependencies: imports from [src/types.ts (Tool), src/console.ts (Console)] | imported by [src/console.ts, examples/test-migrations.ts] | tested by [examples/test-migrations.ts]
  *   Data flow: receives toolName, toolArgs, toolMap from Agent → executes tool.run(args) → measures timing → creates TraceEntry{type, tool_name, arguments, call_id, timing, status, result, iteration, timestamp} → returns to caller
  *   State/Effects: calls console.print() for tool execution logging | awaits tool.run() which may have side effects | creates trace entries but doesn't store them (caller's responsibility)
  *   Integration: exposes executeSingleTool(toolName, toolArgs, toolId, toolMap, agent, console), executeAndRecordTools(toolCalls, toolMap, agent, console), TraceEntry interface | used for manual tool execution and batch processing
  *   Performance: async/await tool execution | timing tracked with Date.now() in milliseconds | sequential execution in executeAndRecordTools
- *   Errors: captures all tool execution errors in TraceEntry{status: 'error', error, error_type} | logs errors via console.print | returns 'not_found' status for missing tools
+ *   Errors: captures all tool execution errors in TraceEntry{status: 'error', error, error_type} | logs errors via console.print | returns 'not_found' status for missing tools | never throws (errors captured in trace)
  */
 
 import { Tool } from '../types';

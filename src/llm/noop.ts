@@ -1,10 +1,12 @@
 /**
  * @purpose Graceful fallback LLM that throws descriptive errors when no valid provider is configured or API keys are missing
  * @llm-note
- *   Dependencies: imports from [src/types.ts] | imported by [src/llm/index.ts] | no tests (error handler)
+ *   Dependencies: imports from [src/types.ts (LLM, LLMResponse, Message, FunctionSchema)] | imported by [src/llm/index.ts] | no tests (error handler)
  *   Data flow: receives messages/tools → immediately throws Error with reason string → no actual LLM communication
  *   State/Effects: throws Error on complete() or structuredComplete() calls | no side effects | prevents silent failures
  *   Integration: implements LLM interface | returned by createLLM() when provider fails to initialize | used as safety net in factory pattern
+ *   Performance: O(1) error throwing | no network calls | no computation
+ *   Errors: always throws Error with custom reason message | fails fast on every method call
  */
 
 import { LLM, LLMResponse, Message, FunctionSchema } from '../types';

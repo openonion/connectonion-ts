@@ -138,6 +138,203 @@ function normalizeRelayBase(relayUrl: string): string {
 }
 
 // ============================================================================
+// Endpoint Resolution
+// ============================================================================
+
+/**
+ * Endpoint resolution result.
+ */
+interface ResolvedEndpoint {
+  httpUrl: string;
+  wsUrl: string;
+}
+
+/**
+ * Sort endpoints by priority: localhost first, then local network, then public.
+ */
+function sortEndpoints(endpoints: string[]): string[] {
+  return [...endpoints].sort((a, b) => {
+    const getPriority = (url: string): number => {
+      if (url.includes('localhost') || url.includes('127.0.0.1')) return 0;
+      if (url.includes('192.168.') || url.includes('10.') || url.includes('172.16.')) return 1;
+      return 2;
+    };
+    return getPriority(a) - getPriority(b);
+  });
+}
+
+/**
+ * Resolve the best endpoint for an agent address.
+ *
+ * Steps:
+ * 1. Query relay server for agent endpoints
+ * 2. Sort by priority (localhost → local network → public)
+ * 3. Verify each HTTP endpoint by checking /info
+ * 4. Return first working endpoint where address matches
+ *
+ * @param agentAddress - Agent's public address (0x...)
+ * @param relayUrl - Relay server URL
+ * @param timeoutMs - Timeout for each endpoint check (default: 3000ms)
+ * @returns Resolved endpoint or null if none work
+ */
+async function resolveEndpoint(
+  agentAddress: string,
+  relayUrl: string,
+  timeoutMs = 3000
+): Promise<ResolvedEndpoint | null> {
+  const normalizedRelay = normalizeRelayBase(relayUrl);
+  const httpsRelay = normalizedRelay.replace(/^wss?:\/\//, 'https://');
+
+  // Step 1: Query relay for agent info
+  let agentInfo: { online?: boolean; endpoints?: string[]; relay?: string };
+  try {
+    const response = await fetch(`${httpsRelay}/api/relay/agents/${agentAddress}`, {
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) {
+      return null;
+    }
+    agentInfo = await response.json();
+  } catch {
+    return null;
+  }
+
+  if (!agentInfo.online || !agentInfo.endpoints?.length) {
+    return null;
+  }
+
+  // Step 2: Sort endpoints (localhost first)
+  const sortedEndpoints = sortEndpoints(agentInfo.endpoints);
+
+  // Step 3: Try each HTTP endpoint
+  const httpEndpoints = sortedEndpoints.filter(ep => ep.startsWith('http://') || ep.startsWith('https://'));
+
+  for (const httpUrl of httpEndpoints) {
+    try {
+      const infoResponse = await fetch(`${httpUrl}/info`, {
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+
+      if (!infoResponse.ok) continue;
+
+      const info = await infoResponse.json() as { address?: string };
+
+      // Step 4: Verify address matches
+      if (info.address === agentAddress) {
+        // Find corresponding WebSocket URL
+        const baseUrl = httpUrl.replace(/^https?:\/\//, '');
+        const protocol = httpUrl.startsWith('https') ? 'wss' : 'ws';
+        const wsUrl = `${protocol}://${baseUrl}/ws`;
+
+        return { httpUrl, wsUrl };
+      }
+    } catch {
+      // This endpoint failed, try next
+      continue;
+    }
+  }
+
+  return null;
+}
+
+// ============================================================================
+// Agent Info
+// ============================================================================
+
+/**
+ * Public agent info returned by fetchAgentInfo.
+ */
+export interface AgentInfo {
+  address: string;
+  name?: string;
+  tools?: string[];
+  trust?: string;
+  version?: string;
+  online: boolean;
+}
+
+const DEFAULT_RELAY = 'wss://oo.openonion.ai';
+
+/**
+ * Fetch agent info by resolving through relay then hitting /info endpoint.
+ * Reuses the same resolution logic as connect() internally.
+ *
+ * @param agentAddress - Agent's public address (0x...)
+ * @param relayUrl - Relay server URL (default: wss://oo.openonion.ai)
+ * @returns Agent info including name, tools, trust level, and online status
+ *
+ * @example
+ * ```typescript
+ * import { fetchAgentInfo } from 'connectonion';
+ *
+ * const info = await fetchAgentInfo('0x3d4017c3...');
+ * console.log(info.name);    // "my-agent"
+ * console.log(info.online);  // true
+ * console.log(info.tools);   // ["search", "calculate"]
+ * ```
+ */
+export async function fetchAgentInfo(
+  agentAddress: string,
+  relayUrl = DEFAULT_RELAY,
+): Promise<AgentInfo> {
+  const normalizedRelay = normalizeRelayBase(relayUrl);
+  const httpsRelay = normalizedRelay.replace(/^wss?:\/\//, 'https://');
+
+  // Step 1: Query relay for agent endpoints
+  let agentData: { online?: boolean; endpoints?: string[] };
+  try {
+    const response = await fetch(`${httpsRelay}/api/relay/agents/${agentAddress}`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) {
+      return { address: agentAddress, online: false };
+    }
+    agentData = await response.json();
+  } catch {
+    return { address: agentAddress, online: false };
+  }
+
+  if (!agentData.online || !agentData.endpoints?.length) {
+    return { address: agentAddress, online: false };
+  }
+
+  // Step 2: Try /info on sorted endpoints (same priority as connect)
+  const httpEndpoints = sortEndpoints(
+    agentData.endpoints.filter(ep => ep.startsWith('http://') || ep.startsWith('https://'))
+  );
+
+  for (const httpUrl of httpEndpoints) {
+    try {
+      const infoResponse = await fetch(`${httpUrl}/info`, {
+        signal: AbortSignal.timeout(3000),
+      });
+      if (!infoResponse.ok) continue;
+
+      const info = await infoResponse.json() as {
+        name?: string; address?: string; tools?: string[];
+        trust?: string; version?: string;
+      };
+
+      if (info.address === agentAddress) {
+        return {
+          address: agentAddress,
+          name: info.name,
+          tools: info.tools,
+          trust: info.trust,
+          version: info.version,
+          online: true,
+        };
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  // Endpoints exist but /info didn't work — still online via relay
+  return { address: agentAddress, online: true };
+}
+
+// ============================================================================
 // Connect Options
 // ============================================================================
 
@@ -211,6 +408,8 @@ export class RemoteAgent {
   private _keys?: address.AddressData;
   private _relayUrl: string;
   private _directUrl?: string;
+  private _resolvedEndpoint?: ResolvedEndpoint;
+  private _endpointResolved = false;
   private _WS: WebSocketCtor;
 
   /** Current status: 'idle' | 'working' | 'waiting' */
@@ -538,12 +737,35 @@ export class RemoteAgent {
   }
 
   /**
+   * Try to resolve endpoint for the agent address.
+   * Only attempts once, caches result.
+   */
+  private async _tryResolveEndpoint(): Promise<void> {
+    // Skip if already resolved or directUrl was provided
+    if (this._endpointResolved || this._directUrl) return;
+
+    this._endpointResolved = true;
+
+    // Only try resolution for valid addresses (0x + 64 hex = 66 chars)
+    // Short addresses like "0xabc123" in tests will skip resolution
+    if (!this.address.startsWith('0x') || this.address.length !== 66) return;
+
+    const resolved = await resolveEndpoint(this.address, this._relayUrl);
+    if (resolved) {
+      this._resolvedEndpoint = resolved;
+    }
+  }
+
+  /**
    * Stream input to agent with real-time UI events.
-   * Uses directUrl if provided, otherwise routes via relay.
+   * Uses directUrl if provided, otherwise tries auto-discovery, then falls back to relay.
    */
   private async _streamInput(prompt: string, timeoutMs: number): Promise<Response> {
     // Lazy-load keys on first use
     this._ensureKeys();
+
+    // Try endpoint resolution (once, cached)
+    await this._tryResolveEndpoint();
 
     // Add user event to UI
     this._addChatItem({ type: 'user', content: prompt });
@@ -560,15 +782,21 @@ export class RemoteAgent {
     const sessionId = this._currentSession?.session_id || generateUUID();
     this._saveSessionId(sessionId);
 
-    // Choose connection mode: direct to agent or via relay
+    // Choose connection mode: direct (explicit or resolved) or via relay
     let wsUrl: string;
+    let isDirect = false;
     if (this._directUrl) {
-      // Direct connection to deployed agent
+      // Explicit direct URL provided
       const baseUrl = this._directUrl.replace(/^https?:\/\//, '');
       const protocol = this._directUrl.startsWith('https') ? 'wss' : 'ws';
       wsUrl = `${protocol}://${baseUrl}/ws`;
+      isDirect = true;
+    } else if (this._resolvedEndpoint) {
+      // Auto-discovered endpoint
+      wsUrl = this._resolvedEndpoint.wsUrl;
+      isDirect = true;
     } else {
-      // Via relay
+      // Fallback to relay
       wsUrl = `${this._relayUrl}/ws/input`;
     }
 
@@ -611,7 +839,7 @@ export class RemoteAgent {
         };
 
         // Only include 'to' when using relay (not needed for direct connection)
-        if (!this._directUrl) {
+        if (!isDirect) {
           payload.to = this.address;
         }
 
@@ -625,7 +853,7 @@ export class RemoteAgent {
         };
 
         // Only include 'to' for relay mode
-        if (!this._directUrl) {
+        if (!isDirect) {
           inputMessage.to = this.address;
         }
 
@@ -672,7 +900,8 @@ export class RemoteAgent {
           if (data?.type === 'llm_call' || data?.type === 'llm_result' ||
               data?.type === 'tool_call' || data?.type === 'tool_result' ||
               data?.type === 'thinking' || data?.type === 'assistant' ||
-              data?.type === 'intent' || data?.type === 'eval' || data?.type === 'compact') {
+              data?.type === 'intent' || data?.type === 'eval' || data?.type === 'compact' ||
+              data?.type === 'tool_blocked') {
             this._handleStreamEvent(data);
           }
 
@@ -734,7 +963,7 @@ export class RemoteAgent {
                 prompt: retryPrompt,
                 timestamp: Math.floor(Date.now() / 1000),
               };
-              if (!this._directUrl) {
+              if (!isDirect) {
                 retryPayload.to = this.address;
               }
 
@@ -746,7 +975,7 @@ export class RemoteAgent {
                 prompt: retryPrompt,
                 ...retrySigned,
               };
-              if (!this._directUrl) {
+              if (!isDirect) {
                 retryMessage.to = this.address;
               }
               if (this._currentSession) {
@@ -763,7 +992,7 @@ export class RemoteAgent {
           // Handle OUTPUT (final response)
           // Direct mode: accept any OUTPUT (1:1 connection, no routing needed)
           // Relay mode: match input_id for proper routing
-          const isOutputForUs = this._directUrl
+          const isOutputForUs = isDirect
             ? data?.type === 'OUTPUT'
             : data?.type === 'OUTPUT' && data?.input_id === inputId;
           if (isOutputForUs) {

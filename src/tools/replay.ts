@@ -1,12 +1,12 @@
 /**
  * @purpose Replay decorator for re-executing last tool call with modified arguments during debugging (parity with Python @replay)
  * @llm-note
- *   Dependencies: none (leaf node) | imported by [src/index.ts] | tested by interactive debug sessions
+ *   Dependencies: none (leaf node, no imports) | imported by [src/index.ts, tests/e2e/exampleAgent.test.ts] | tested by interactive debug sessions
  *   Data flow: withReplay decorator wraps function → captures func, thisArg, argsArray, paramNames on each call → stores in module-scoped lastCall → replay(overrides) re-runs with merged arguments
- *   State/Effects: mutates module-scoped lastCall object | executes wrapped functions which may have side effects
+ *   State/Effects: mutates module-scoped lastCall object | executes wrapped functions which may have side effects | singleton pattern (one lastCall per process)
  *   Integration: exposes withReplay decorator, replay(overrides), xrayReplay(tool, overrides) | used in Agent.autoDebug() for interactive debugging | preserves function context with thisArg
- *   Performance: regex parsing of function signature to extract param names | O(1) lastCall storage
- *   Errors: throws if replay() called before any withReplay function executed | throws if xrayReplay called with non-function
+ *   Performance: regex parsing of function signature to extract param names | O(1) lastCall storage | function.toString() on each wrap
+ *   Errors: throws Error if replay() called before any withReplay function executed | no validation on overrides (passed directly to function)
  */
 
 type LastCall = {

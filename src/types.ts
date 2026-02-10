@@ -148,3 +148,37 @@ export interface LLM {
    */
   structuredComplete<T = any>(messages: Message[], schema: any): Promise<T>;
 }
+
+/**
+ * Session status returned by GET /sessions/{id}
+ * @interface SessionStatus
+ */
+export interface SessionStatus {
+  /** Unique session identifier */
+  session_id: string;
+  /** Current status of the session */
+  status: 'running' | 'done';
+  /** Original user prompt */
+  prompt: string;
+  /** Final result (only present when status='done') */
+  result?: string;
+  /** Time when session was created (Unix timestamp) */
+  created?: number;
+  /** Time when session expires (Unix timestamp) */
+  expires?: number;
+  /** Duration in milliseconds */
+  duration_ms?: number;
+}
+
+/**
+ * Result from polling for a session
+ * @interface PollResult
+ */
+export interface PollResult {
+  /** Whether polling found a completed result */
+  success: boolean;
+  /** The result text if successful */
+  result?: string;
+  /** Error message if polling failed */
+  error?: string;
+}

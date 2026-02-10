@@ -24,4 +24,18 @@ export * from './trust/tools';
 
 export * from './types';
 export { llmDo } from './llm/llm-do';
-export { connect, RemoteAgent } from './connect';
+export { transcribe, type TranscribeOptions } from './transcribe';
+export {
+  connect,
+  RemoteAgent,
+  Response,
+  ChatItem,
+  ChatItemType,
+  AgentStatus,
+  ConnectOptions,
+  SessionState,
+  fetchAgentInfo,
+  AgentInfo,
+} from './connect';
+export * as address from './address';
+export * as addressBrowser from './address-browser';

@@ -38,9 +38,9 @@ async function main() {
     const agentAddress = '0x3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c';
 
     // For local development, use:
-    // const agent = connect(agentAddress, 'ws://localhost:8000/ws/announce');
+    // const agent = connect(agentAddress, { relayUrl: 'ws://localhost:8000' });
 
-    // For production, use default (wss://oo.openonion.ai/ws/announce):
+    // For production, use default (wss://oo.openonion.ai):
     const agent = connect(agentAddress);
 
     console.log('Connected to Python agent:', agent.toString());
@@ -54,7 +54,7 @@ async function main() {
         console.log('\nMake sure:');
         console.log('1. Python agent is running with announce(agent)');
         console.log('2. Agent address matches');
-        console.log('3. Relay is accessible (default: wss://oo.openonion.ai/ws/announce)');
+        console.log('3. Relay is accessible (default: wss://oo.openonion.ai)');
     }
 }
 

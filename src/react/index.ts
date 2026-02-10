@@ -30,14 +30,17 @@ import {
   ConnectOptions,
 } from '../connect';
 
-// Re-export types
+// Re-export types and utilities
 export type {
   Response,
   ChatItem,
   ChatItemType,
   AgentStatus,
   ConnectOptions,
+  AgentInfo,
 } from '../connect';
+
+export { fetchAgentInfo } from '../connect';
 
 /** @deprecated Use ChatItem instead */
 export type UIEvent = ChatItem;

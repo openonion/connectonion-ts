@@ -28,11 +28,14 @@
  *   default: 'careful'
  *
  * @llm-note
- *   Dependencies: no imports (leaf node) | imported by [src/core/agent.ts] | no tests yet (configuration layer)
+ *   Dependencies: none (leaf node, no imports) | imported by [src/index.ts, src/core/agent.ts] | no tests yet (configuration layer)
  *   Data flow: receives trust level string or object → returns trust config with level + prompt → used by Agent constructor
  *   State/Effects: reads env CONNECTONION_TRUST | no state mutations | pure functions
  *   Integration: exposes createTrustAgent(trust, apiKey, model), getDefaultTrustLevel(), getTrustPrompt(level), TrustLevel type | default level: 'careful' | prompts define trust agent behavior for future policy evaluation
- *   ⚠️ Trust agent not yet implemented - returns config object only | future: could return Agent instance for runtime policy checks
+ *   Performance: O(1) config object creation | env var read once per call | no caching
+ *   Errors: no validation on trust level input | invalid env var falls back to 'careful' | never throws
+ *
+ * ⚠️ Trust agent not yet implemented - returns config object only | future: could return Agent instance for runtime policy checks
  */
 
 export type TrustLevel = 'open' | 'careful' | 'strict';

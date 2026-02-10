@@ -29,10 +29,10 @@
  * @llm-note
  *   Dependencies: imports from [fs, os, path (Node.js built-ins)] | imported by [src/index.ts] | tested manually
  *   Data flow: checkWhitelist(agentId) → reads ~/.connectonion/trusted.txt → matches agentId against patterns (* wildcard, prefix*) → returns allow/deny string | testCapability(agentId, test, expected) → verifies expected behavior
- *   State/Effects: reads ~/.connectonion/trusted.txt synchronously | throws on missing file | no writes
+ *   State/Effects: reads ~/.connectonion/trusted.txt synchronously | throws on missing file | no writes | returns strings (not booleans) for agent interpretation
  *   Integration: exposes checkWhitelist(agentId), testCapability(agentId, test, expected), verifyAgent(agentId, agentInfo?) | can be added as tools to trust agents | supports '*' for all and 'prefix*' for wildcards
- *   Performance: reads entire trusted.txt file per check | no caching | synchronous fs.readFileSync
- *   Errors: throws if ~/.connectonion/trusted.txt missing | pattern matching via string operations
+ *   Performance: reads entire trusted.txt file per check | no caching | synchronous fs.readFileSync | O(n) line matching
+ *   Errors: throws if ~/.connectonion/trusted.txt missing | no error handling on fs.readFileSync | no validation on agentId format
  */
 import * as fs from 'fs';
 import * as os from 'os';

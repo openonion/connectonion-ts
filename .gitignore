@@ -39,4 +39,15 @@ coverage/
 # Package manager
 package-lock.json
 yarn.lock
-pnpm-lock.yaml.co/logs/
+pnpm-lock.yaml
+
+# ConnectOnion data
+.co/logs/
+.co/evals/
+.co/keys/
+
+# Browser automation
+chromium_automation_profile/
+
+# Temp files
+.tmp/

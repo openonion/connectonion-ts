@@ -66,11 +66,11 @@
  *   ⚠️ messages persist across input() calls until resetConversation() | @xray tools pause execution in debug mode | tool errors returned to LLM for retry
  */
 
-import { 
-  AgentConfig, 
-  Tool, 
-  LLM, 
-  Message, 
+import {
+  AgentConfig,
+  Tool,
+  LLM,
+  Message,
   ToolResult
 } from '../types';
 import { createLLM } from '../llm';
@@ -114,22 +114,22 @@ dotenv.config();
 export class Agent {
   /** Unique identifier for this agent */
   private name: string;
-  
+
   /** System prompt that defines the agent's behavior and personality */
   private systemPrompt: string;
-  
+
   /** Maximum number of iterations for tool calling loops */
   private maxIterations: number;
-  
+
   /** Array of tools available to this agent */
   private tools: Tool[];
-  
+
   /** Quick lookup map for tools by name */
   private toolMap: Map<string, Tool>;
-  
+
   /** LLM instance for generating responses */
   private llm: LLM;
-  
+
   /** Session interface aligned with Python: messages + trace */
   // messages are tracked in this.messages; trace in this.trace
 
@@ -192,13 +192,13 @@ export class Agent {
     }
     this.systemPrompt = systemPrompt || `You are ${config.name}, a helpful AI assistant.`;
     this.maxIterations = config.maxIterations || 10;
-    
+
     // Process tools: convert functions, class instances, etc. to Tool objects
     this.tools = processTools(config.tools || []);
-    
+
     // Create a map for O(1) tool lookup by name
     this.toolMap = new Map(this.tools.map(tool => [tool.name, tool]));
-    
+
     // No persistent history: align with Python current_session semantics
 
     // Setup console logging
@@ -216,7 +216,7 @@ export class Agent {
       logFile = `.co/logs/${this.name}.log`;
     }
     this.console = new Console(logFile);
-    
+
     // Initialize LLM - either use provided instance or create one
     if (config.llm) {
       this.llm = config.llm;
@@ -225,7 +225,7 @@ export class Agent {
       // Default to Anthropic Claude Sonnet 3.5 if unspecified
       this.llm = createLLM(config.model || 'claude-3-5-sonnet-20241022', config.apiKey);
     }
-    
+
     // Trust parameter handling
     const trustLevel = (typeof config.trust === 'string') ? config.trust : undefined;
     const tl = (trustLevel === 'open' || trustLevel === 'careful' || trustLevel === 'strict') ? trustLevel as any : undefined;
@@ -356,7 +356,7 @@ export class Agent {
         return { result, callId: toolCall.id };
       })
     );
-    
+
     return results;
   }
 
@@ -377,7 +377,7 @@ export class Agent {
   ): Promise<ToolResult> {
     // Look up the tool by name
     const tool = this.toolMap.get(name);
-    
+
     // Handle case where tool doesn't exist
     if (!tool) {
       const result: ToolResult = {
@@ -386,7 +386,7 @@ export class Agent {
       };
       return result;
     }
-    
+
     // Prepare xray context before execution
     const previousTools = this.trace.map(t => t.tool_name);
     injectXrayContext(
@@ -417,7 +417,7 @@ export class Agent {
       } else {
         const rs = String(output);
         const preview = rs.length > 120 ? rs.slice(0, 120) + '...' : rs;
-        this.console.print(`← Result (${(dt/1000).toFixed(dt < 100 ? 4 : 1)}s): ${preview}`);
+        this.console.print(`← Result (${(dt / 1000).toFixed(dt < 100 ? 4 : 1)}s): ${preview}`);
       }
       // Silence unused var warning by referencing callId in a no-op
       void callId;

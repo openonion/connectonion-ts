@@ -33,11 +33,12 @@
  *   └─────────────────────────────────────────┘
  *
  * @llm-note
- *   Dependencies: imports from [./index (createLLM), ../types] | imported by [src/index.ts] | tested by manual examples
+ *   Dependencies: imports from [src/llm/index.ts (createLLM), src/types.ts (Message)] | imported by [src/index.ts] | tested by manual examples
  *   Data flow: receives prompt: string + options → creates messages array with optional system → calls createLLM(model).complete(messages) → returns response.content string
  *   State/Effects: makes LLM API call via provider | no persistent state | returns text content only (discards tool_calls)
  *   Integration: exposes llmDo(prompt, options?) where options: {model?, apiKey?, system?, temperature?} | delegates to createLLM factory | default model from createLLM ('claude-3-5-sonnet-20241022')
  *   Performance: creates new LLM instance per call (no caching) | single API request
+ *   Errors: throws from LLM provider (API errors, network errors, invalid model names) | no error handling (fails fast)
  * @example
  *   const text = await llmDo('Hello', { model: 'gpt-4o-mini' })
  */

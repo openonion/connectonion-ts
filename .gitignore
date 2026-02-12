@@ -51,3 +51,4 @@ chromium_automation_profile/
 
 # Temp files
 .tmp/
+.vercel

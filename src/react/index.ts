@@ -46,34 +46,17 @@ export { fetchAgentInfo } from '../connect';
 export type UIEvent = ChatItem;
 
 // =============================================================================
-// Storage Structure (Documentation)
+// Storage Structure
 // =============================================================================
 
 /**
  * localStorage structure:
  *
- * co:agent:{address}:current
- *   → { sessionId, messages, ui, createdAt, updatedAt }
- *   → Current active session for this agent
- *
- * TODO: useSessions hook will add:
- *
- * co:agent:{address}:sessions
- *   → SessionInfo[] - list of all sessions
- *   → [{ sessionId, preview, createdAt, updatedAt }, ...]
- *
  * co:agent:{address}:session:{sessionId}
- *   → Full session data when not active
- *   → { sessionId, messages, ui, createdAt, updatedAt }
+ *   → { messages, ui, createdAt, updatedAt }
+ *   → Each session stored separately by sessionId
  *
- * TODO: useSessions API:
- *   const {
- *     sessions,        // SessionInfo[]
- *     currentSessionId,
- *     switchSession,   // (sessionId) => void
- *     deleteSession,   // (sessionId) => void
- *     createSession,   // () => string
- *   } = useSessions('0x...')
+ * Future: useSessions hook for session management
  */
 
 // =============================================================================
@@ -90,7 +73,6 @@ export interface Message {
 
 /** Store state */
 interface AgentState {
-  sessionId: string;
   messages: Message[];
   ui: ChatItem[];
   status: AgentStatus;
@@ -114,21 +96,9 @@ type AgentStore = AgentState & AgentActions;
 // Utilities
 // =============================================================================
 
-function generateSessionId(): string {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
-
 function createInitialState(): AgentState {
   const now = Date.now();
   return {
-    sessionId: generateSessionId(),
     messages: [],
     ui: [],
     status: 'idle',
@@ -144,7 +114,7 @@ function createInitialState(): AgentState {
 
 const storeCache = new Map<string, UseBoundStore<StoreApi<AgentStore>>>();
 
-function createAgentStore(address: string) {
+function createAgentStore(address: string, sessionId: string) {
   return create<AgentStore>()(
     persist(
       (set) => ({
@@ -161,11 +131,10 @@ function createAgentStore(address: string) {
         reset: () => set(createInitialState()),
       }),
       {
-        name: `co:agent:${address}:current`,
+        name: `co:agent:${address}:session:${sessionId}`,
         storage: createJSONStorage(() => (globalThis as any).localStorage),
         skipHydration: typeof globalThis !== 'undefined' && !(globalThis as any).localStorage,
         partialize: (state) => ({
-          sessionId: state.sessionId,
           messages: state.messages,
           ui: state.ui,
           createdAt: state.createdAt,
@@ -176,11 +145,12 @@ function createAgentStore(address: string) {
   );
 }
 
-function getStore(address: string) {
-  let store = storeCache.get(address);
+function getStore(address: string, sessionId: string) {
+  const key = `${address}:${sessionId}`;
+  let store = storeCache.get(key);
   if (!store) {
-    store = createAgentStore(address);
-    storeCache.set(address, store);
+    store = createAgentStore(address, sessionId);
+    storeCache.set(key, store);
   }
   return store;
 }
@@ -202,21 +172,25 @@ export interface UseAgentReturn {
   reset: () => void;
 }
 
+export interface UseAgentOptions extends ConnectOptions {
+  sessionId: string;
+}
+
 /**
  * React hook for connecting to a remote AI agent.
- * Session automatically persists to localStorage.
+ * Session automatically persists to localStorage by sessionId.
  *
  * @param address - Agent's public address (0x...)
- * @param options - Connection options (optional)
+ * @param options - Connection options with required sessionId
  */
 export function useAgent(
   address: string,
-  options: ConnectOptions = {}
+  options: UseAgentOptions
 ): UseAgentReturn {
-  const useStore = getStore(address);
+  const { sessionId, ...connectOptions } = options;
+  const useStore = getStore(address, sessionId);
 
   // State from store
-  const sessionId = useStore((s) => s.sessionId);
   const messages = useStore((s) => s.messages);
   const ui = useStore((s) => s.ui);
   const status = useStore((s) => s.status);
@@ -229,14 +203,22 @@ export function useAgent(
   const updateMessages = useStore((s) => s.updateMessages);
   const resetStore = useStore((s) => s.reset);
 
-  // RemoteAgent instance
+  // RemoteAgent instance (keyed by address + sessionId)
   const agentRef = useRef<RemoteAgent | null>(null);
+  const keyRef = useRef<string>(`${address}:${sessionId}`);
+
+  // Reset agent if address or sessionId changes
+  if (keyRef.current !== `${address}:${sessionId}`) {
+    agentRef.current = null;
+    keyRef.current = `${address}:${sessionId}`;
+  }
+
   if (!agentRef.current) {
-    agentRef.current = connect(address, options);
+    agentRef.current = connect(address, connectOptions);
   }
   const agent = agentRef.current;
 
-  // Restore session to agent on mount
+  // Restore session to agent on mount or when sessionId changes
   useEffect(() => {
     if (messages.length > 0) {
       (agent as any)._currentSession = {
@@ -246,7 +228,7 @@ export function useAgent(
       // Restore UI events
       (agent as any)._chatItems = [...ui];
     }
-  }, []);
+  }, [sessionId]);
 
   const input = async (prompt: string, timeoutMs?: number): Promise<Response> => {
     setError(null);

@@ -396,6 +396,7 @@ export interface SessionState {
   messages?: Array<{ role: string; content: string }>;
   trace?: unknown[];
   turn?: number;
+  _savedAt?: number;  // Internal: timestamp for client-side persistence
 }
 
 // ============================================================================
@@ -522,6 +523,13 @@ export class RemoteAgent {
       try { this._activeWs.close(); } catch { /* ignore */ }
       this._activeWs = null;
     }
+
+    // Clear session from localStorage
+    if (this._currentSession?.session_id) {
+      this._clearSession(this._currentSession.session_id);
+    }
+    this._clearSessionId();
+
     this._currentSession = null;
     this._chatItems = [];
     this._status = 'idle';
@@ -702,11 +710,86 @@ export class RemoteAgent {
 
   /**
    * Clear session ID from localStorage (browser only).
+   * Also clears the full session data.
    */
   private _clearSessionId(): void {
     if (isBrowserEnv() && typeof globalThis !== 'undefined' && 'localStorage' in globalThis) {
       try {
+        // Get active session_id and clear its data
+        const activeId = (globalThis as any).localStorage.getItem('connectonion_active_session');
+        if (activeId) {
+          this._clearSession(activeId);
+        }
         (globalThis as any).localStorage.removeItem('connectonion_active_session');
+      } catch {
+        // Ignore localStorage errors
+      }
+    }
+  }
+
+  /**
+   * Save full session state to localStorage (browser only).
+   * Enables conversation recovery after browser refresh.
+   */
+  private _saveSession(session: SessionState): void {
+    if (isBrowserEnv() && typeof globalThis !== 'undefined' && 'localStorage' in globalThis && session.session_id) {
+      try {
+        const sessionWithTimestamp = {
+          ...session,
+          _savedAt: Date.now()
+        };
+        const key = `connectonion_session_${session.session_id}`;
+        (globalThis as any).localStorage.setItem(key, JSON.stringify(sessionWithTimestamp));
+      } catch {
+        // Ignore localStorage errors (quota exceeded, etc.)
+      }
+    }
+  }
+
+  /**
+   * Load session state from localStorage (browser only).
+   * Returns null if session doesn't exist.
+   */
+  private _loadSession(sessionId: string): SessionState | null {
+    if (isBrowserEnv() && typeof globalThis !== 'undefined' && 'localStorage' in globalThis) {
+      try {
+        const key = `connectonion_session_${sessionId}`;
+        const stored = (globalThis as any).localStorage.getItem(key);
+        if (stored) {
+          const data = JSON.parse(stored) as SessionState;
+          // Remove timestamp before returning
+          delete data._savedAt;
+          return data;
+        }
+      } catch {
+        // Ignore localStorage errors
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Load active session ID from localStorage (browser only).
+   */
+  private _loadActiveSessionId(): string | null {
+    if (isBrowserEnv() && typeof globalThis !== 'undefined' && 'localStorage' in globalThis) {
+      try {
+        return (globalThis as any).localStorage.getItem('connectonion_active_session');
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Clear specific session from localStorage (browser only).
+   */
+  private _clearSession(sessionId: string): void {
+    if (isBrowserEnv() && typeof globalThis !== 'undefined' && 'localStorage' in globalThis) {
+      try {
+        const key = `connectonion_session_${sessionId}`;
+        (globalThis as any).localStorage.removeItem(key);
       } catch {
         // Ignore localStorage errors
       }
@@ -804,6 +887,15 @@ export class RemoteAgent {
 
     const inputId = generateUUID();
 
+    // Try to restore session from localStorage if not in memory
+    const activeSessionId = this._loadActiveSessionId();
+    if (activeSessionId && !this._currentSession) {
+      const loaded = this._loadSession(activeSessionId);
+      if (loaded) {
+        this._currentSession = loaded;
+      }
+    }
+
     // Generate or reuse session_id for tracking and polling fallback
     const sessionId = this._currentSession?.session_id || generateUUID();
     this._saveSessionId(sessionId);
@@ -841,14 +933,14 @@ export class RemoteAgent {
           if (this._enablePolling) {
             try {
               const result = await this._pollForResult(sessionId);
-              this._clearSessionId();
+              // Don't clear session - keep for next message
               resolve({ text: result, done: true });
             } catch (pollError) {
-              this._clearSessionId();
+              // Don't clear session - keep for retry with context
               reject(new Error(`Connection timed out and polling failed: ${pollError}`));
             }
           } else {
-            this._clearSessionId();
+            // Don't clear session - keep for retry with context
               reject(new Error('Connection timed out'));
           }
         }
@@ -1027,9 +1119,10 @@ export class RemoteAgent {
             this._stopHealthCheck();
             this._status = 'idle';
 
-            // Sync session from server
+            // Sync session from server and persist to localStorage
             if (data.session) {
               this._currentSession = data.session;
+              this._saveSession(data.session);  // Save for next message
             }
 
             // Add agent response to UI (skip if already added via 'assistant' event)
@@ -1042,7 +1135,7 @@ export class RemoteAgent {
             }
 
             this._activeWs = null;  // Clear before close
-            this._clearSessionId();  // Clear session_id on success
+            // Don't clear session - keep for next message in conversation
               try { ws.close(); } catch { /* ignore */ }
             resolve({ text: result, done: true });
           }
@@ -1054,7 +1147,7 @@ export class RemoteAgent {
             this._stopHealthCheck();
             this._status = 'idle';
             this._activeWs = null;  // Clear before close
-            this._clearSessionId();  // Clear session_id on error
+            // Don't clear session - keep for retry with context
               try { ws.close(); } catch { /* ignore */ }
             reject(new Error(`Agent error: ${String(data.message || data.error || 'Unknown error')}`));
           }
@@ -1063,7 +1156,7 @@ export class RemoteAgent {
           clearTimeout(timer);
           this._stopHealthCheck();
           this._status = 'idle';
-          this._clearSessionId();  // Clear session_id on error
+          // Don't clear session - keep for retry with context
           try { ws.close(); } catch { /* ignore */ }
           reject(e);
         }
@@ -1081,7 +1174,7 @@ export class RemoteAgent {
         if (this._enablePolling) {
           try {
             const result = await this._pollForResult(sessionId);
-            this._clearSessionId();
+            // Don't clear session - keep for next message
               resolve({ text: result, done: true });
             return;
           } catch {
@@ -1089,7 +1182,7 @@ export class RemoteAgent {
           }
         }
 
-        this._clearSessionId();
+        // Don't clear session - keep for retry with context
         reject(new Error(`WebSocket error: ${String(err)}`));
       };
 
@@ -1105,7 +1198,7 @@ export class RemoteAgent {
           if (this._enablePolling) {
             try {
               const result = await this._pollForResult(sessionId);
-              this._clearSessionId();
+              // Don't clear session - keep for next message
               resolve({ text: result, done: true });
               return;
             } catch {
@@ -1113,7 +1206,7 @@ export class RemoteAgent {
             }
           }
 
-          this._clearSessionId();
+          // Don't clear session - keep for retry with context
           reject(new Error('Connection closed before response'));
         }
       };

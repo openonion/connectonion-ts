@@ -46,8 +46,8 @@
  *
  * @llm-note
  *   Dependencies: imports from [src/address.ts (AddressData, generate, load, sign, etc.), src/types.ts (SessionStatus)] | imported by [src/index.ts, src/react/index.ts, examples/connect-example.ts, tests/connect.test.ts] | tested by [tests/connect.test.ts]
- *   Data flow: connect(address, options) → creates RemoteAgent → agent.input(prompt) → generates session_id (UUID) → saves to localStorage → opens WebSocket → sends INPUT{type, input_id, to, prompt, session{session_id}, signature?} → receives PING every 30s, responds with PONG → receives stream events (tool_call, tool_result, thinking, assistant) → receives OUTPUT{result, session_id, session} → clears localStorage → returns Response{text, done} | On disconnect/timeout: polls GET /sessions/{session_id} every 10s until result ready
- *   State/Effects: opens WebSocket connections | sends signed/unsigned messages | updates internal UI events array | syncs session from server | generates/loads Ed25519 keys | saves keys to localStorage (browser) or .co/keys/ (Node.js) | saves active session_id to localStorage for recovery | polls server via HTTP fetch on connection failure | health check interval detects dead connections
+ *   Data flow: connect(address, options) → creates RemoteAgent → agent.input(prompt) → generates session_id (UUID) → opens WebSocket → sends INPUT{type, input_id, to, prompt, session{session_id, messages}, signature?} → receives PING every 30s, responds with PONG → receives stream events (tool_call, tool_result, thinking, assistant) with session state → receives OUTPUT{result, session_id, session} → returns Response{text, done} | On disconnect/timeout: polls GET /sessions/{session_id} every 10s until result ready
+ *   State/Effects: opens WebSocket connections | sends signed/unsigned messages | updates internal UI events array | syncs session from server events (in-memory) | generates/loads Ed25519 keys | saves keys to localStorage (browser) or .co/keys/ (Node.js) | polls server via HTTP fetch on connection failure | health check interval detects dead connections
  *   Integration: exposes connect(address, options), RemoteAgent class, Response, ChatItem types, AgentStatus, ConnectOptions{enablePolling, pollIntervalMs, maxPollAttempts} | supports relay mode (wss://oo.openonion.ai) and direct mode (deployed agent URL) | Ed25519 signing for authentication | session persistence across calls | automatic recovery from network failures, timeouts, page refreshes
  *   Performance: 600s timeout default (10 min) | real-time WebSocket streaming | PING/PONG keep-alive every 30s | health check every 10s | polling fallback on failures | results persist 24h server-side
  *   Errors: throws on timeout (600s default) after polling exhausted | throws on WebSocket errors after polling attempt | throws on connection close after polling attempt | throws on ERROR messages from server | throws if session expired (404) during polling | graceful fallback to polling prevents data loss
@@ -81,7 +81,7 @@ export type ChatItemType = 'user' | 'agent' | 'thinking' | 'tool_call' | 'ask_us
 
 /** Chat item - data for rendering one element in chat UI */
 export type ChatItem =
-  | { id: string; type: 'user'; content: string }
+  | { id: string; type: 'user'; content: string; images?: string[] }
   | { id: string; type: 'agent'; content: string }
   | { id: string; type: 'thinking'; status: 'running' | 'done' | 'error'; model?: string; duration_ms?: number; content?: string; kind?: string; context_percent?: number; usage?: { input_tokens?: number; output_tokens?: number; prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; cost?: number } }
   | { id: string; type: 'tool_call'; name: string; args?: Record<string, unknown>; status: 'running' | 'done' | 'error'; result?: string; timing_ms?: number }
@@ -396,7 +396,6 @@ export interface SessionState {
   messages?: Array<{ role: string; content: string }>;
   trace?: unknown[];
   turn?: number;
-  _savedAt?: number;  // Internal: timestamp for client-side persistence
 }
 
 // ============================================================================
@@ -523,13 +522,6 @@ export class RemoteAgent {
       try { this._activeWs.close(); } catch { /* ignore */ }
       this._activeWs = null;
     }
-
-    // Clear session from localStorage
-    if (this._currentSession?.session_id) {
-      this._clearSession(this._currentSession.session_id);
-    }
-    this._clearSessionId();
-
     this._currentSession = null;
     this._chatItems = [];
     this._status = 'idle';
@@ -546,18 +538,20 @@ export class RemoteAgent {
    * Returns Response with text and done flag.
    *
    * @param prompt - User's input
-   * @param timeoutMs - Timeout in milliseconds (default: 600000 / 10 minutes)
+   * @param options - Optional settings: images (base64 data URLs), timeoutMs
    * @returns Response with text and done flag
    */
-  async input(prompt: string, timeoutMs = 600000): Promise<Response> {
-    return this._streamInput(prompt, timeoutMs);
+  async input(prompt: string, options?: { images?: string[]; timeoutMs?: number }): Promise<Response> {
+    const timeoutMs = options?.timeoutMs ?? 600000;
+    const images = options?.images;
+    return this._streamInput(prompt, timeoutMs, images);
   }
 
   /**
    * Async version of input (same as input, for API consistency with Python).
    */
-  async inputAsync(prompt: string, timeoutMs = 600000): Promise<Response> {
-    return this.input(prompt, timeoutMs);
+  async inputAsync(prompt: string, options?: { images?: string[]; timeoutMs?: number }): Promise<Response> {
+    return this.input(prompt, options);
   }
 
   /**
@@ -696,107 +690,6 @@ export class RemoteAgent {
   }
 
   /**
-   * Save session ID to localStorage (browser only).
-   */
-  private _saveSessionId(sessionId: string): void {
-    if (isBrowserEnv() && typeof globalThis !== 'undefined' && 'localStorage' in globalThis) {
-      try {
-        (globalThis as any).localStorage.setItem('connectonion_active_session', sessionId);
-      } catch {
-        // Ignore localStorage errors
-      }
-    }
-  }
-
-  /**
-   * Clear session ID from localStorage (browser only).
-   * Also clears the full session data.
-   */
-  private _clearSessionId(): void {
-    if (isBrowserEnv() && typeof globalThis !== 'undefined' && 'localStorage' in globalThis) {
-      try {
-        // Get active session_id and clear its data
-        const activeId = (globalThis as any).localStorage.getItem('connectonion_active_session');
-        if (activeId) {
-          this._clearSession(activeId);
-        }
-        (globalThis as any).localStorage.removeItem('connectonion_active_session');
-      } catch {
-        // Ignore localStorage errors
-      }
-    }
-  }
-
-  /**
-   * Save full session state to localStorage (browser only).
-   * Enables conversation recovery after browser refresh.
-   */
-  private _saveSession(session: SessionState): void {
-    if (isBrowserEnv() && typeof globalThis !== 'undefined' && 'localStorage' in globalThis && session.session_id) {
-      try {
-        const sessionWithTimestamp = {
-          ...session,
-          _savedAt: Date.now()
-        };
-        const key = `connectonion_session_${session.session_id}`;
-        (globalThis as any).localStorage.setItem(key, JSON.stringify(sessionWithTimestamp));
-      } catch {
-        // Ignore localStorage errors (quota exceeded, etc.)
-      }
-    }
-  }
-
-  /**
-   * Load session state from localStorage (browser only).
-   * Returns null if session doesn't exist.
-   */
-  private _loadSession(sessionId: string): SessionState | null {
-    if (isBrowserEnv() && typeof globalThis !== 'undefined' && 'localStorage' in globalThis) {
-      try {
-        const key = `connectonion_session_${sessionId}`;
-        const stored = (globalThis as any).localStorage.getItem(key);
-        if (stored) {
-          const data = JSON.parse(stored) as SessionState;
-          // Remove timestamp before returning
-          delete data._savedAt;
-          return data;
-        }
-      } catch {
-        // Ignore localStorage errors
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Load active session ID from localStorage (browser only).
-   */
-  private _loadActiveSessionId(): string | null {
-    if (isBrowserEnv() && typeof globalThis !== 'undefined' && 'localStorage' in globalThis) {
-      try {
-        return (globalThis as any).localStorage.getItem('connectonion_active_session');
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Clear specific session from localStorage (browser only).
-   */
-  private _clearSession(sessionId: string): void {
-    if (isBrowserEnv() && typeof globalThis !== 'undefined' && 'localStorage' in globalThis) {
-      try {
-        const key = `connectonion_session_${sessionId}`;
-        (globalThis as any).localStorage.removeItem(key);
-      } catch {
-        // Ignore localStorage errors
-      }
-    }
-  }
-
-  /**
    * Start health check interval to detect dead connections.
    * Checks if PING received within 60 seconds, attempts reconnect if not.
    */
@@ -820,15 +713,12 @@ export class RemoteAgent {
         if (this._enablePolling) {
           this._pollForResult(sessionId)
             .then((result) => {
-              this._clearSessionId();
               resolve({ text: result, done: true });
             })
             .catch((pollError) => {
-              this._clearSessionId();
               reject(new Error(`Connection health check failed and polling failed: ${pollError}`));
             });
         } else {
-          this._clearSessionId();
           reject(new Error('Connection health check failed: No PING received for 60 seconds'));
         }
       }
@@ -869,7 +759,7 @@ export class RemoteAgent {
    * Stream input to agent with real-time UI events.
    * Uses directUrl if provided, otherwise tries auto-discovery, then falls back to relay.
    */
-  private async _streamInput(prompt: string, timeoutMs: number): Promise<Response> {
+  private async _streamInput(prompt: string, timeoutMs: number, images?: string[]): Promise<Response> {
     // Lazy-load keys on first use
     this._ensureKeys();
 
@@ -877,7 +767,7 @@ export class RemoteAgent {
     await this._tryResolveEndpoint();
 
     // Add user event to UI
-    this._addChatItem({ type: 'user', content: prompt });
+    this._addChatItem({ type: 'user', content: prompt, images });
 
     // Add optimistic thinking (shows immediately, removed when real events arrive)
     this._addChatItem({ type: 'thinking', id: '__optimistic__', status: 'running' });
@@ -887,18 +777,8 @@ export class RemoteAgent {
 
     const inputId = generateUUID();
 
-    // Try to restore session from localStorage if not in memory
-    const activeSessionId = this._loadActiveSessionId();
-    if (activeSessionId && !this._currentSession) {
-      const loaded = this._loadSession(activeSessionId);
-      if (loaded) {
-        this._currentSession = loaded;
-      }
-    }
-
-    // Generate or reuse session_id for tracking and polling fallback
+    // Reuse existing session_id or generate new one for tracking and polling fallback
     const sessionId = this._currentSession?.session_id || generateUUID();
-    this._saveSessionId(sessionId);
 
     // Choose connection mode: direct (explicit or resolved) or via relay
     let wsUrl: string;
@@ -970,6 +850,11 @@ export class RemoteAgent {
           ...signed,
         };
 
+        // Add images if provided
+        if (images && images.length > 0) {
+          inputMessage.images = images;
+        }
+
         // Only include 'to' for relay mode
         if (!isDirect) {
           inputMessage.to = this.address;
@@ -1021,6 +906,11 @@ export class RemoteAgent {
               data?.type === 'intent' || data?.type === 'eval' || data?.type === 'compact' ||
               data?.type === 'tool_blocked') {
             this._handleStreamEvent(data);
+
+            // Sync session state from each event (client is source of truth)
+            if (data.session) {
+              this._currentSession = data.session;
+            }
           }
 
           // Handle ask_user event (agent needs more input)
@@ -1117,12 +1007,12 @@ export class RemoteAgent {
             settled = true;
             clearTimeout(timer);
             this._stopHealthCheck();
+            this._removeOptimisticThinking();
             this._status = 'idle';
 
-            // Sync session from server and persist to localStorage
+            // Sync session from server
             if (data.session) {
               this._currentSession = data.session;
-              this._saveSession(data.session);  // Save for next message
             }
 
             // Add agent response to UI (skip if already added via 'assistant' event)

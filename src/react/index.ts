@@ -28,6 +28,7 @@ import {
   ChatItem,
   AgentStatus,
   ConnectOptions,
+  SessionState,
 } from '../connect';
 
 // Re-export types and utilities
@@ -53,8 +54,9 @@ export type UIEvent = ChatItem;
  * localStorage structure:
  *
  * co:agent:{address}:session:{sessionId}
- *   → { messages, ui, createdAt, updatedAt }
+ *   → { messages, ui, session, createdAt, updatedAt }
  *   → Each session stored separately by sessionId
+ *   → session contains full SessionState (messages, trace, turn) synced from server
  *
  * Future: useSessions hook for session management
  */
@@ -75,6 +77,7 @@ export interface Message {
 interface AgentState {
   messages: Message[];
   ui: ChatItem[];
+  session: SessionState | null;
   status: AgentStatus;
   error: Error | null;
   createdAt: number;
@@ -85,6 +88,7 @@ interface AgentState {
 interface AgentActions {
   setStatus: (status: AgentStatus) => void;
   setUI: (ui: ChatItem[]) => void;
+  setSession: (session: SessionState | null) => void;
   setError: (error: Error | null) => void;
   updateMessages: (messages: Message[]) => void;
   reset: () => void;
@@ -101,6 +105,7 @@ function createInitialState(): AgentState {
   return {
     messages: [],
     ui: [],
+    session: null,
     status: 'idle',
     error: null,
     createdAt: now,
@@ -124,6 +129,8 @@ function createAgentStore(address: string, sessionId: string) {
 
         setUI: (ui) => set({ ui, updatedAt: Date.now() }),
 
+        setSession: (session) => set({ session, updatedAt: Date.now() }),
+
         setError: (error) => set({ error }),
 
         updateMessages: (messages) => set({ messages, updatedAt: Date.now() }),
@@ -137,6 +144,7 @@ function createAgentStore(address: string, sessionId: string) {
         partialize: (state) => ({
           messages: state.messages,
           ui: state.ui,
+          session: state.session,
           createdAt: state.createdAt,
           updatedAt: state.updatedAt,
         }),
@@ -165,7 +173,7 @@ export interface UseAgentReturn {
   sessionId: string;
   isProcessing: boolean;
   error: Error | null;
-  input: (prompt: string, timeoutMs?: number) => Promise<Response>;
+  input: (prompt: string, options?: { images?: string[]; timeoutMs?: number }) => Promise<Response>;
   respond: (answer: string | string[]) => void;
   respondToApproval: (approved: boolean, scope?: 'once' | 'session', mode?: 'reject_soft' | 'reject_hard' | 'reject_explain', feedback?: string) => void;
   submitOnboard: (options: { inviteCode?: string; payment?: number }) => void;
@@ -193,12 +201,14 @@ export function useAgent(
   // State from store
   const messages = useStore((s) => s.messages);
   const ui = useStore((s) => s.ui);
+  const session = useStore((s) => s.session);
   const status = useStore((s) => s.status);
   const error = useStore((s) => s.error);
 
   // Actions from store
   const setStatus = useStore((s) => s.setStatus);
   const setUI = useStore((s) => s.setUI);
+  const setSession = useStore((s) => s.setSession);
   const setError = useStore((s) => s.setError);
   const updateMessages = useStore((s) => s.updateMessages);
   const resetStore = useStore((s) => s.reset);
@@ -220,41 +230,44 @@ export function useAgent(
 
   // Restore session to agent on mount or when sessionId changes
   useEffect(() => {
-    if (messages.length > 0) {
-      (agent as any)._currentSession = {
-        session_id: sessionId,
-        messages: messages,
-      };
-      // Restore UI events
+    if (session) {
+      (agent as any)._currentSession = { ...session, session_id: sessionId };
+      (agent as any)._chatItems = [...ui];
+    } else if (messages.length > 0) {
+      (agent as any)._currentSession = { session_id: sessionId, messages };
       (agent as any)._chatItems = [...ui];
     }
   }, [sessionId]);
 
-  const input = async (prompt: string, timeoutMs?: number): Promise<Response> => {
+  const input = async (prompt: string, options?: { images?: string[]; timeoutMs?: number }): Promise<Response> => {
     setError(null);
     setStatus('working');
 
-    // Set session before request
-    (agent as any)._currentSession = {
-      session_id: sessionId,
-      messages: messages,
-    };
+    // Set session before request (restore from store for server to continue conversation)
+    (agent as any)._currentSession = session
+      ? { ...session, session_id: sessionId }
+      : { session_id: sessionId, messages };
 
-    // Poll for UI updates
+    // Poll for UI updates and session state
     const pollInterval = setInterval(() => {
       setUI([...agent.ui]);
       setStatus(agent.status);
+      // Sync session from agent on every tick (server sends session with each trace event)
+      if (agent.currentSession) {
+        setSession(agent.currentSession);
+      }
     }, 50);
 
     try {
-      const response = await agent.input(prompt, timeoutMs);
-
-      // Persist messages
-      if (agent.currentSession?.messages) {
-        updateMessages(agent.currentSession.messages as Message[]);
-      }
+      const response = await agent.input(prompt, options);
 
       // Final sync
+      if (agent.currentSession) {
+        setSession(agent.currentSession);
+        if (agent.currentSession.messages) {
+          updateMessages(agent.currentSession.messages as Message[]);
+        }
+      }
       setUI([...agent.ui]);
       setStatus(agent.status);
 

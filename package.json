@@ -1,6 +1,6 @@
 {
   "name": "connectonion",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "description": "Connect to Python AI agents from TypeScript apps - Use powerful Python agents in your React, Next.js, Node.js, and Electron applications",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

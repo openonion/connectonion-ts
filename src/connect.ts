@@ -82,7 +82,7 @@ export type ChatItemType = 'user' | 'agent' | 'thinking' | 'tool_call' | 'ask_us
 /** Chat item - data for rendering one element in chat UI */
 export type ChatItem =
   | { id: string; type: 'user'; content: string; images?: string[] }
-  | { id: string; type: 'agent'; content: string }
+  | { id: string; type: 'agent'; content: string; images?: string[] }
   | { id: string; type: 'thinking'; status: 'running' | 'done' | 'error'; model?: string; duration_ms?: number; content?: string; kind?: string; context_percent?: number; usage?: { input_tokens?: number; output_tokens?: number; prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; cost?: number } }
   | { id: string; type: 'tool_call'; name: string; args?: Record<string, unknown>; status: 'running' | 'done' | 'error'; result?: string; timing_ms?: number }
   | { id: string; type: 'ask_user'; text: string; options: string[]; multi_select: boolean }
@@ -1309,6 +1309,31 @@ export class RemoteAgent {
             id: event.id != null ? String(event.id) : undefined,  // Use backend's ID
             content: event.content as string,
           });
+        }
+        break;
+      }
+
+      case 'agent_image': {
+        // Agent sent an image to display
+        const imageData = event.image as string;
+        if (imageData) {
+          // Find the last agent message and add the image to it
+          const lastAgent = this._chatItems.filter((e): e is ChatItem & { type: 'agent' } => e.type === 'agent').pop();
+          if (lastAgent) {
+            // Add image to existing agent message
+            if (!lastAgent.images) {
+              lastAgent.images = [];
+            }
+            lastAgent.images.push(imageData);
+          } else {
+            // No agent message yet - create one with just the image
+            this._addChatItem({
+              type: 'agent',
+              id: event.id != null ? String(event.id) : undefined,
+              content: '',
+              images: [imageData],
+            });
+          }
         }
         break;
       }

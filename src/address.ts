@@ -152,11 +152,12 @@ export function saveBrowser(keys: AddressData): void {
     throw new Error('saveBrowser() requires browser environment');
   }
 
+  // Convert Uint8Array to hex string (browser-safe, no Buffer dependency)
   const data = {
     address: keys.address,
     shortAddress: keys.shortAddress,
-    publicKey: Buffer.from(keys.publicKey).toString('hex'),
-    privateKey: Buffer.from(keys.privateKey).toString('hex'),
+    publicKey: Array.from(keys.publicKey).map(b => b.toString(16).padStart(2, '0')).join(''),
+    privateKey: Array.from(keys.privateKey).map(b => b.toString(16).padStart(2, '0')).join(''),
   };
 
   storage.setItem('connectonion_keys', JSON.stringify(data));
@@ -183,11 +184,16 @@ export function loadBrowser(): AddressData | null {
       publicKey: string;
       privateKey: string;
     };
+
+    // Convert hex strings to Uint8Array (browser-safe, no Buffer dependency)
+    const publicKey = new Uint8Array(data.publicKey.match(/.{2}/g)!.map(b => parseInt(b, 16)));
+    const privateKey = new Uint8Array(data.privateKey.match(/.{2}/g)!.map(b => parseInt(b, 16)));
+
     return {
       address: data.address,
       shortAddress: data.shortAddress,
-      publicKey: Buffer.from(data.publicKey, 'hex'),
-      privateKey: Buffer.from(data.privateKey, 'hex'),
+      publicKey,
+      privateKey,
     };
   } catch {
     return null;

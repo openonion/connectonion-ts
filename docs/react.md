@@ -15,8 +15,8 @@ React is a peer dependency - you need React 17+ in your project.
 ```tsx
 import { useAgent } from 'connectonion/react';
 
-function ChatBot() {
-  const { ui, status, input, isProcessing } = useAgent('0x123abc');
+function ChatBot({ sessionId }: { sessionId: string }) {
+  const { ui, status, input, isProcessing } = useAgent('0x123abc', { sessionId });
 
   const handleSubmit = async (text: string) => {
     await input(text);
@@ -43,14 +43,15 @@ function ChatBot() {
 
 ```tsx
 const {
-  agent,          // RemoteAgent instance
   status,         // 'idle' | 'working' | 'waiting'
-  ui,             // UIEvent[] - events for rendering
-  currentSession, // Session state from server
+  ui,             // ChatItem[] - events for rendering
+  sessionId,      // string - the session ID you passed in
   input,          // (prompt: string) => Promise<Response>
   reset,          // () => void - start fresh
   isProcessing,   // boolean - true when status !== 'idle'
   error,          // Error | null - last error
+  respond,        // (answer: string | string[]) => void - answer ask_user
+  respondToApproval, // (approved: boolean, ...) => void
 } = useAgent(address, options);
 ```
 
@@ -59,22 +60,20 @@ const {
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `address` | `string` | Agent's public address (0x...) |
-| `options` | `UseAgentOptions` | Optional configuration |
+| `options` | `UseAgentOptions` | Options with required `sessionId` |
 
 ### Options
 
 ```tsx
-interface UseAgentOptions {
-  // Connection options (passed to connect())
+interface UseAgentOptions extends ConnectOptions {
+  sessionId: string;         // Required - unique ID for this conversation
+}
+
+// ConnectOptions (passed to connect())
+interface ConnectOptions {
   keys?: AddressData;        // Signing keys for strict trust
   relayUrl?: string;         // Custom relay URL
-
-  // Callbacks
-  onStatusChange?: (status: AgentStatus) => void;
-  onUIEvent?: (event: UIEvent) => void;
-  onComplete?: (response: Response) => void;
-  onAskUser?: (question: string) => void;
-  onError?: (error: Error) => void;
+  enablePolling?: boolean;   // Polling fallback (default: true)
 }
 ```
 
@@ -166,6 +165,51 @@ const handleSubmit = async (text: string) => {
 };
 ```
 
+## Session Persistence
+
+The `useAgent` hook automatically persists session state to `localStorage` via Zustand. This means:
+
+- **Survives browser refresh**: If the user refreshes mid-conversation, the session is restored
+- **Client is source of truth**: Server sends session state with every streaming event, the hook saves it locally
+- **Application controls lifecycle**: The SDK saves sessions, your app decides when to create new ones or clean up old ones
+
+### How It Works
+
+1. Each `sessionId` gets its own localStorage key: `co:agent:{address}:session:{sessionId}`
+2. On every streaming event from the server, the hook syncs `agent.currentSession` to the store
+3. On mount (or page refresh), the hook restores the session from localStorage back to the agent
+4. The agent sends the restored session to the server on the next `input()`, so the server can continue the conversation
+
+### Session Lifecycle
+
+```tsx
+// Your app generates the sessionId (e.g., from URL params)
+const sessionId = crypto.randomUUID();
+
+// Pass it to the hook - session auto-persists
+const { input, reset } = useAgent('0x123abc', { sessionId });
+
+// reset() clears the Zustand store for this sessionId
+// To start a NEW conversation, navigate to a new sessionId
+```
+
+### What Gets Persisted
+
+| Field | Persisted | Description |
+|-------|-----------|-------------|
+| `messages` | Yes | Conversation history |
+| `ui` | Yes | Chat items for rendering |
+| `session` | Yes | Full SessionState from server |
+| `status` | No | Always starts as 'idle' |
+| `error` | No | Transient, not persisted |
+
+### Base RemoteAgent vs React Hook
+
+The base `RemoteAgent` (from `connect()`) keeps session **in memory only**. Only the React hook adds localStorage persistence. This separation means:
+
+- **Node.js / non-React**: Session lives in memory, lost on process restart
+- **React (useAgent)**: Session auto-persists to localStorage
+
 ## Examples
 
 ### Basic Chat Interface
@@ -173,8 +217,8 @@ const handleSubmit = async (text: string) => {
 ```tsx
 import { useAgent } from 'connectonion/react';
 
-function Chat() {
-  const { ui, input, isProcessing, reset } = useAgent('0x123abc');
+function Chat({ sessionId }: { sessionId: string }) {
+  const { ui, input, isProcessing, reset } = useAgent('0x123abc', { sessionId });
   const [text, setText] = useState('');
 
   const handleSubmit = async (e: FormEvent) => {
@@ -212,51 +256,17 @@ function Chat() {
 }
 ```
 
-### With Callbacks
-
-```tsx
-import { useAgent } from 'connectonion/react';
-import { toast } from 'your-toast-library';
-
-function AgentWithNotifications() {
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  const { ui, input } = useAgent('0x123abc', {
-    onStatusChange: (status) => {
-      console.log('Agent status:', status);
-    },
-    onUIEvent: () => {
-      // Auto-scroll on new events
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    },
-    onComplete: (response) => {
-      toast.success('Task completed!');
-    },
-    onError: (error) => {
-      toast.error(error.message);
-    },
-  });
-
-  return (
-    <div>
-      {ui.map(e => <Event key={e.id} event={e} />)}
-      <div ref={messagesEndRef} />
-    </div>
-  );
-}
-```
-
 ### With Signing Keys (Strict Trust)
 
 ```tsx
 import { useAgent } from 'connectonion/react';
 import { address } from 'connectonion';
 
-function SecureAgent() {
+function SecureAgent({ sessionId }: { sessionId: string }) {
   // Generate or load keys
   const [keys] = useState(() => address.generate());
 
-  const { input } = useAgent('0x123abc', { keys });
+  const { input } = useAgent('0x123abc', { sessionId, keys });
 
   // Your public address for the agent to verify
   console.log('My address:', keys.address);
@@ -296,14 +306,10 @@ All types are exported for convenience:
 ```tsx
 import type {
   Response,
-  UIEvent,
-  UIEventType,
-  UserUIEvent,
-  AgentUIEvent,
-  ThinkingUIEvent,
-  ToolCallUIEvent,
-  AskUserUIEvent,
+  ChatItem,
+  ChatItemType,
   AgentStatus,
+  ConnectOptions,
   UseAgentOptions,
   UseAgentReturn,
 } from 'connectonion/react';
@@ -316,7 +322,7 @@ The hook is safe for SSR - it initializes with empty state and only connects on 
 ```tsx
 // Works in Next.js, Remix, etc.
 function Page() {
-  const { ui, input } = useAgent('0x123abc');
+  const { ui, input } = useAgent('0x123abc', { sessionId: 'my-session' });
 
   // ui is [] on server, populated on client
   return <div>{ui.map(...)}</div>;
@@ -328,8 +334,8 @@ function Page() {
 | Feature | `useAgent()` | `connect()` |
 |---------|--------------|-------------|
 | Reactive updates | Automatic | Manual polling |
-| State management | Built-in | You manage |
-| Callbacks | `onComplete`, etc. | None |
+| State management | Built-in (Zustand) | You manage |
+| Session persistence | localStorage (automatic) | In-memory only |
 | SSR safe | Yes | Yes |
 | Framework | React only | Any JS |
 

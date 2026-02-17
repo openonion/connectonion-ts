@@ -77,7 +77,7 @@ export interface Response {
 // ============================================================================
 
 /** Chat item type */
-export type ChatItemType = 'user' | 'agent' | 'thinking' | 'tool_call' | 'ask_user' | 'approval_needed' | 'onboard_required' | 'onboard_success' | 'intent' | 'eval' | 'compact' | 'tool_blocked';
+export type ChatItemType = 'user' | 'agent' | 'thinking' | 'tool_call' | 'ask_user' | 'approval_needed' | 'onboard_required' | 'onboard_success' | 'intent' | 'eval' | 'compact' | 'tool_blocked' | 'ulw_turns_reached';
 
 /** Chat item - data for rendering one element in chat UI */
 export type ChatItem =
@@ -92,7 +92,8 @@ export type ChatItem =
   | { id: string; type: 'intent'; status: 'analyzing' | 'understood'; ack?: string; is_build?: boolean }
   | { id: string; type: 'eval'; status: 'evaluating' | 'done'; passed?: boolean; summary?: string; expected?: string; eval_path?: string }
   | { id: string; type: 'compact'; status: 'compacting' | 'done' | 'error'; context_before?: number; context_after?: number; context_percent?: number; message?: string; error?: string }
-  | { id: string; type: 'tool_blocked'; tool: string; reason: string; message: string };
+  | { id: string; type: 'tool_blocked'; tool: string; reason: string; message: string }
+  | { id: string; type: 'ulw_turns_reached'; turns_used: number; max_turns: number };
 
 // ============================================================================
 // WebSocket Types
@@ -396,7 +397,15 @@ export interface SessionState {
   messages?: Array<{ role: string; content: string }>;
   trace?: unknown[];
   turn?: number;
+  mode?: 'safe' | 'plan' | 'accept_edits' | 'ulw';
+  /** ULW mode: max turns before pausing */
+  ulw_turns?: number;
+  /** ULW mode: turns used so far */
+  ulw_turns_used?: number;
 }
+
+/** Valid approval modes */
+export type ApprovalMode = 'safe' | 'plan' | 'accept_edits' | 'ulw';
 
 // ============================================================================
 // RemoteAgent Class
@@ -511,9 +520,44 @@ export class RemoteAgent {
     return this._chatItems;
   }
 
+  /** Current approval mode: 'safe' | 'plan' | 'accept_edits' */
+  get mode(): ApprovalMode {
+    return this._currentSession?.mode || 'safe';
+  }
+
   // ==========================================================================
   // Public Methods
   // ==========================================================================
+
+  /**
+   * Change the approval mode.
+   * Sends mode_change message to server if WebSocket is active.
+   *
+   * @param mode - New mode: 'safe' | 'plan' | 'accept_edits'
+   */
+  setMode(mode: ApprovalMode, options?: { turns?: number }): void {
+    // Update local state immediately
+    if (!this._currentSession) {
+      this._currentSession = { mode };
+    } else {
+      this._currentSession.mode = mode;
+    }
+
+    // For ULW mode, initialize turn tracking
+    if (mode === 'ulw') {
+      this._currentSession.ulw_turns = options?.turns || 100;
+      this._currentSession.ulw_turns_used = 0;
+    }
+
+    // Send to server if connected
+    if (this._activeWs) {
+      const msg: Record<string, unknown> = { type: 'mode_change', mode };
+      if (mode === 'ulw' && options?.turns) {
+        msg.turns = options.turns;
+      }
+      this._activeWs.send(JSON.stringify(msg));
+    }
+  }
 
   /** Clear session and UI state, start fresh */
   reset(): void {
@@ -615,6 +659,25 @@ export class RemoteAgent {
     this._activeWs.send(JSON.stringify({
       type: 'ONBOARD_SUBMIT',
       ...signed,
+    }));
+  }
+
+  /**
+   * Respond to ULW turns reached event.
+   * Only valid when status === 'waiting' after an ulw_turns_reached event.
+   *
+   * @param action - 'continue' to extend turns, or 'switch_mode' to change mode
+   * @param options - turns to extend (for continue) or mode to switch to
+   */
+  respondToUlwTurnsReached(action: 'continue' | 'switch_mode', options?: { turns?: number; mode?: ApprovalMode }): void {
+    if (!this._activeWs) {
+      throw new Error('No active connection to respond to ULW');
+    }
+    this._activeWs.send(JSON.stringify({
+      type: 'ULW_RESPONSE',
+      action,
+      ...(action === 'continue' && options?.turns && { turns: options.turns }),
+      ...(action === 'switch_mode' && options?.mode && { mode: options.mode }),
     }));
   }
 
@@ -899,6 +962,33 @@ export class RemoteAgent {
             return;
           }
 
+          // Handle session_sync (separate message to avoid circular ref on server)
+          if (data?.type === 'session_sync' && data.session) {
+            this._currentSession = data.session;
+          }
+
+          // Handle mode_changed (agent or user changed approval mode)
+          if (data?.type === 'mode_changed' && data.mode) {
+            if (!this._currentSession) {
+              this._currentSession = { mode: data.mode };
+            } else {
+              this._currentSession.mode = data.mode;
+            }
+          }
+
+          // Handle ulw_turns_reached (ULW mode hit max turns)
+          if (data?.type === 'ulw_turns_reached') {
+            this._status = 'waiting';
+            if (this._currentSession) {
+              this._currentSession.ulw_turns_used = data.turns_used;
+            }
+            this._addChatItem({
+              type: 'ulw_turns_reached',
+              turns_used: data.turns_used as number,
+              max_turns: data.max_turns as number,
+            });
+          }
+
           // Handle streaming events
           if (data?.type === 'llm_call' || data?.type === 'llm_result' ||
               data?.type === 'tool_call' || data?.type === 'tool_result' ||
@@ -907,7 +997,7 @@ export class RemoteAgent {
               data?.type === 'tool_blocked') {
             this._handleStreamEvent(data);
 
-            // Sync session state from each event (client is source of truth)
+            // Sync session state from each event (legacy, kept for backwards compat)
             if (data.session) {
               this._currentSession = data.session;
             }

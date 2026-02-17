@@ -6,7 +6,7 @@
  * - UI events (user, agent, tool_call, tool_result merging)
  * - Status property (idle, working, waiting)
  * - currentSession property
- * - ask_user handling (done: false)
+ * - ask_user handling (status: waiting, UI events)
  * - Signing and relay fallback
  * - PING/PONG keep-alive mechanism
  * - Session recovery via polling
@@ -60,26 +60,6 @@ describe('Response type', () => {
     expect(response).toHaveProperty('done');
     expect(response.text).toBe('Echo: ping');
     expect(response.done).toBe(true);
-  });
-
-  it('returns done=false on ask_user event', async () => {
-    class AskUserWS extends MockWebSocket {
-      send(_data: unknown): void {
-        const out = { type: 'ask_user', text: 'Which date?' };
-        setTimeout(() => this.onmessage && this.onmessage({ data: JSON.stringify(out) }), 0);
-      }
-    }
-
-    const agent = connect('0xabc123', {
-      relayUrl: 'ws://localhost:8000',
-      wsCtor: AskUserWS as any,
-    });
-
-    const response = await agent.input('Book a flight');
-
-    expect(response.done).toBe(false);
-    expect(response.text).toBe('Which date?');
-    expect(agent.status).toBe('waiting');
   });
 });
 
@@ -176,9 +156,16 @@ describe('Status management', () => {
       wsCtor: AskUserWS as any,
     });
 
-    await agent.input('Choose');
+    // Don't await - ask_user keeps the promise pending
+    agent.input('Choose');
+
+    // Wait for ask_user event to be processed
+    await new Promise(resolve => setTimeout(resolve, 50));
 
     expect(agent.status).toBe('waiting');
+
+    // Clean up
+    agent.reset();
   });
 
   it('resets status to idle on error', async () => {
@@ -340,11 +327,18 @@ describe('UI events', () => {
       wsCtor: AskUserWS as any,
     });
 
-    await agent.input('Choose');
+    // Don't await - ask_user keeps the promise pending (agent waits for respond())
+    agent.input('Choose');
+
+    // Wait for ask_user event to be processed
+    await new Promise(resolve => setTimeout(resolve, 50));
 
     const askEvents = agent.ui.filter(e => e.type === 'ask_user');
     expect(askEvents.length).toBe(1);
     expect((askEvents[0] as any).text).toBe('Which color?');
+
+    // Clean up
+    agent.reset();
   });
 
   it('generates unique IDs for events without IDs', async () => {
@@ -419,6 +413,59 @@ describe('Session management', () => {
     expect(agent.currentSession?.turn).toBe(1);
   });
 
+  it('syncs session from streaming events', async () => {
+    class StreamSessionWS extends MockWebSocket {
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        // Send thinking event with session
+        setTimeout(() => {
+          this.onmessage && this.onmessage({
+            data: JSON.stringify({
+              type: 'thinking',
+              session: { messages: [{ role: 'user', content: 'test' }], turn: 1 },
+            })
+          });
+        }, 0);
+        // Then OUTPUT
+        setTimeout(() => {
+          this.onmessage && this.onmessage({
+            data: JSON.stringify({
+              type: 'OUTPUT',
+              input_id: msg.input_id,
+              result: 'done',
+              session: { messages: [{ role: 'user', content: 'test' }, { role: 'assistant', content: 'done' }], turn: 1 },
+            })
+          });
+        }, 5);
+      }
+    }
+
+    const agent = connect('0xabc123', {
+      relayUrl: 'ws://localhost:8000',
+      wsCtor: StreamSessionWS as any,
+    });
+
+    await agent.input('test');
+
+    expect(agent.currentSession).not.toBeNull();
+    expect(agent.currentSession?.messages?.length).toBe(2);
+  });
+
+  it('preserves session across multiple inputs', async () => {
+    const agent = connect('0xabc123', {
+      relayUrl: 'ws://localhost:8000',
+      wsCtor: MockWebSocket as any,
+    });
+
+    await agent.input('first');
+    const firstSession = agent.currentSession;
+    expect(firstSession).not.toBeNull();
+
+    await agent.input('second');
+    // Session should still exist (not cleared on success)
+    expect(agent.currentSession).not.toBeNull();
+  });
+
   it('works after reset', async () => {
     const agent = connect('0xabc123', {
       relayUrl: 'ws://localhost:8000',
@@ -473,6 +520,7 @@ describe('relay fallback', () => {
     const agent = connect('0xabc', {
       relayUrl: 'ws://localhost:8000',
       wsCtor: NoReplyWS as any,
+      enablePolling: false, // Disable polling so timeout rejects immediately
     });
 
     await expect(agent.input('hello', 50)).rejects.toThrow(/timed out/);
@@ -505,7 +553,7 @@ describe('signed requests', () => {
     expect(capturedMessage!.timestamp).toBeGreaterThan(0);
   });
 
-  it('does not include signature when no keys provided', async () => {
+  it('auto-generates keys when none provided', async () => {
     let capturedMessage: Record<string, unknown> | null = null;
 
     class CapturingWS extends MockWebSocket {
@@ -522,9 +570,10 @@ describe('signed requests', () => {
 
     await agent.input('test');
 
+    // Keys are auto-generated on first use, so from and signature should be present
     expect(capturedMessage).not.toBeNull();
-    expect(capturedMessage!.from).toBeUndefined();
-    expect(capturedMessage!.signature).toBeUndefined();
+    expect(capturedMessage!.from).toBeDefined();
+    expect(capturedMessage!.signature).toBeDefined();
   });
 
   it('signature is verifiable', async () => {

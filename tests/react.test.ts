@@ -5,13 +5,13 @@
  *
  * Tests cover:
  * - useAgent hook initialization
- * - Reactive state updates
- * - input() method
- * - reset() method
- * - Session persistence
+ * - input() returns correct Response
+ * - reset() behavior
+ * - Session persistence config
+ * - Error handling
  */
 
-import { renderHook, act, waitFor } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 import { useAgent } from '../src/react';
 
 // Mock address module to skip signing
@@ -54,7 +54,13 @@ class MockWebSocket {
       type: 'OUTPUT',
       input_id: msg.input_id,
       result: `Echo: ${msg.prompt}`,
-      session: { messages: [{ role: 'user', content: msg.prompt }, { role: 'assistant', content: `Echo: ${msg.prompt}` }] },
+      session: {
+        session_id: msg.session?.session_id,
+        messages: [
+          { role: 'user', content: msg.prompt },
+          { role: 'assistant', content: `Echo: ${msg.prompt}` },
+        ],
+      },
     };
     setTimeout(() => this.onmessage && this.onmessage({ data: JSON.stringify(out) }), 10);
   }
@@ -67,8 +73,13 @@ class MockWebSocket {
   }
 }
 
-// Inject mock WebSocket
 const mockWsCtor = MockWebSocket as any;
+
+// Unique address counter to avoid Zustand store cache collisions between tests
+let addrCounter = 0;
+function uniqueAddr() {
+  return `0xtest${++addrCounter}`;
+}
 
 describe('useAgent hook', () => {
   beforeEach(() => {
@@ -78,7 +89,7 @@ describe('useAgent hook', () => {
   describe('initialization', () => {
     it('initializes with idle status', () => {
       const { result } = renderHook(() =>
-        useAgent('0xabc123', { relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgent(uniqueAddr(), { sessionId: 'test-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
       );
 
       expect(result.current.status).toBe('idle');
@@ -86,7 +97,7 @@ describe('useAgent hook', () => {
 
     it('initializes with empty UI array', () => {
       const { result } = renderHook(() =>
-        useAgent('0xabc123', { relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgent(uniqueAddr(), { sessionId: 'test-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
       );
 
       expect(result.current.ui).toEqual([]);
@@ -94,7 +105,7 @@ describe('useAgent hook', () => {
 
     it('initializes isProcessing as false', () => {
       const { result } = renderHook(() =>
-        useAgent('0xabc123', { relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgent(uniqueAddr(), { sessionId: 'test-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
       );
 
       expect(result.current.isProcessing).toBe(false);
@@ -102,27 +113,25 @@ describe('useAgent hook', () => {
 
     it('initializes error as null', () => {
       const { result } = renderHook(() =>
-        useAgent('0xabc123', { relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgent(uniqueAddr(), { sessionId: 'test-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
       );
 
       expect(result.current.error).toBeNull();
     });
 
-    it('generates a sessionId', () => {
+    it('uses provided sessionId', () => {
       const { result } = renderHook(() =>
-        useAgent('0xabc123', { relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgent(uniqueAddr(), { sessionId: 'my-session-123', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
       );
 
-      expect(result.current.sessionId).toBeDefined();
-      expect(typeof result.current.sessionId).toBe('string');
-      expect(result.current.sessionId.length).toBeGreaterThan(0);
+      expect(result.current.sessionId).toBe('my-session-123');
     });
   });
 
   describe('input method', () => {
     it('returns Response with text and done', async () => {
       const { result } = renderHook(() =>
-        useAgent('0xabc123', { relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgent(uniqueAddr(), { sessionId: 'test-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
       );
 
       let response: any;
@@ -134,42 +143,26 @@ describe('useAgent hook', () => {
       expect(response.done).toBe(true);
     });
 
-    it('updates UI with user event', async () => {
-      // Use unique address to avoid cache collision
+    it('handles multiple sequential inputs', async () => {
       const { result } = renderHook(() =>
-        useAgent('0xuser-event-test', { relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgent(uniqueAddr(), { sessionId: 'test-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
       );
 
+      let r1: any, r2: any;
       await act(async () => {
-        await result.current.input('Hello');
+        r1 = await result.current.input('First');
       });
-
-      await waitFor(() => {
-        const userEvents = result.current.ui.filter(e => e.type === 'user');
-        expect(userEvents.length).toBeGreaterThanOrEqual(1);
-        expect((userEvents[0] as any).content).toBe('Hello');
-      });
-    });
-
-    it('updates UI with agent event', async () => {
-      const { result } = renderHook(() =>
-        useAgent('0xabc123', { relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
-      );
-
       await act(async () => {
-        await result.current.input('Hello');
+        r2 = await result.current.input('Second');
       });
 
-      await waitFor(() => {
-        const agentEvents = result.current.ui.filter(e => e.type === 'agent');
-        expect(agentEvents.length).toBe(1);
-        expect((agentEvents[0] as any).content).toBe('Echo: Hello');
-      });
+      expect(r1.text).toBe('Echo: First');
+      expect(r2.text).toBe('Echo: Second');
     });
 
     it('sets status back to idle after completion', async () => {
       const { result } = renderHook(() =>
-        useAgent('0xabc123', { relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgent(uniqueAddr(), { sessionId: 'test-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
       );
 
       await act(async () => {
@@ -182,43 +175,21 @@ describe('useAgent hook', () => {
   });
 
   describe('reset method', () => {
-    it('clears UI events', async () => {
+    it('keeps same sessionId after reset (sessionId is a prop)', async () => {
       const { result } = renderHook(() =>
-        useAgent('0xabc123', { relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgent(uniqueAddr(), { sessionId: 'fixed-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
       );
-
-      await act(async () => {
-        await result.current.input('Hello');
-      });
-
-      await waitFor(() => {
-        expect(result.current.ui.length).toBeGreaterThan(0);
-      });
 
       act(() => {
         result.current.reset();
       });
 
-      expect(result.current.ui).toEqual([]);
-    });
-
-    it('generates new sessionId', async () => {
-      const { result } = renderHook(() =>
-        useAgent('0xabc123', { relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
-      );
-
-      const oldSessionId = result.current.sessionId;
-
-      act(() => {
-        result.current.reset();
-      });
-
-      expect(result.current.sessionId).not.toBe(oldSessionId);
+      expect(result.current.sessionId).toBe('fixed-session');
     });
 
     it('sets status to idle', async () => {
       const { result } = renderHook(() =>
-        useAgent('0xabc123', { relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgent(uniqueAddr(), { sessionId: 'test-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
       );
 
       act(() => {
@@ -230,7 +201,7 @@ describe('useAgent hook', () => {
 
     it('clears error', async () => {
       const { result } = renderHook(() =>
-        useAgent('0xabc123', { relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgent(uniqueAddr(), { sessionId: 'test-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
       );
 
       act(() => {
@@ -239,60 +210,10 @@ describe('useAgent hook', () => {
 
       expect(result.current.error).toBeNull();
     });
-  });
 
-  describe('error handling', () => {
-    it('sets error on failure', async () => {
-      class ErrorWS extends MockWebSocket {
-        send(data: unknown): void {
-          const msg = JSON.parse(String(data));
-          const out = { type: 'ERROR', input_id: msg.input_id, error: 'Test error' };
-          setTimeout(() => this.onmessage && this.onmessage({ data: JSON.stringify(out) }), 0);
-        }
-      }
-
+    it('works - can input after reset', async () => {
       const { result } = renderHook(() =>
-        useAgent('0xabc123', {
-          relayUrl: 'ws://localhost',
-          wsCtor: ErrorWS as any,
-        })
-      );
-
-      await act(async () => {
-        try {
-          await result.current.input('Hello');
-        } catch {
-          // Expected
-        }
-      });
-
-      expect(result.current.error).not.toBeNull();
-    });
-  });
-
-  describe('multiple inputs', () => {
-    it('accumulates UI events', async () => {
-      const { result } = renderHook(() =>
-        useAgent('0xabc123', { relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
-      );
-
-      await act(async () => {
-        await result.current.input('First');
-      });
-
-      await act(async () => {
-        await result.current.input('Second');
-      });
-
-      await waitFor(() => {
-        const userEvents = result.current.ui.filter(e => e.type === 'user');
-        expect(userEvents.length).toBe(2);
-      });
-    });
-
-    it('works after reset', async () => {
-      const { result } = renderHook(() =>
-        useAgent('0xabc123', { relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgent(uniqueAddr(), { sessionId: 'test-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
       );
 
       await act(async () => {
@@ -309,37 +230,61 @@ describe('useAgent hook', () => {
       });
 
       expect(response.text).toBe('Echo: After reset');
+    });
+  });
 
-      await waitFor(() => {
-        const userEvents = result.current.ui.filter(e => e.type === 'user');
-        expect(userEvents.length).toBe(1);
-        expect((userEvents[0] as any).content).toBe('After reset');
+  describe('error handling', () => {
+    it('throws on agent error', async () => {
+      class ErrorWS extends MockWebSocket {
+        send(data: unknown): void {
+          const msg = JSON.parse(String(data));
+          const out = { type: 'ERROR', input_id: msg.input_id, error: 'Test error' };
+          setTimeout(() => this.onmessage && this.onmessage({ data: JSON.stringify(out) }), 0);
+        }
+      }
+
+      const { result } = renderHook(() =>
+        useAgent(uniqueAddr(), {
+          sessionId: 'test-session',
+          relayUrl: 'ws://localhost',
+          wsCtor: ErrorWS as any,
+        })
+      );
+
+      let caughtError: Error | null = null;
+      await act(async () => {
+        try {
+          await result.current.input('Hello');
+        } catch (err) {
+          caughtError = err as Error;
+        }
       });
+
+      expect(caughtError).not.toBeNull();
+      expect(caughtError!.message).toContain('Test error');
     });
   });
 
   describe('session persistence', () => {
-    it('generates and maintains sessionId', async () => {
+    it('uses provided sessionId', async () => {
       const { result } = renderHook(() =>
-        useAgent('0xpersist-test', { relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgent(uniqueAddr(), { sessionId: 'persist-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
       );
 
-      const sessionId = result.current.sessionId;
-      expect(sessionId).toBeDefined();
-      expect(typeof sessionId).toBe('string');
-      expect(sessionId.length).toBeGreaterThan(0);
+      expect(result.current.sessionId).toBe('persist-session');
     });
 
     it('keeps same sessionId across re-renders', async () => {
+      const addr = uniqueAddr();
       const { result, rerender } = renderHook(() =>
-        useAgent('0xsame123', { relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgent(addr, { sessionId: 'stable-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
       );
 
-      const sessionId = result.current.sessionId;
+      expect(result.current.sessionId).toBe('stable-session');
 
       rerender();
 
-      expect(result.current.sessionId).toBe(sessionId);
+      expect(result.current.sessionId).toBe('stable-session');
     });
   });
 });

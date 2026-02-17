@@ -30,12 +30,14 @@ interface Response {
 
 ## Session State
 
-Both server and client have `currentSession` as source of truth:
+Server sends session state with every streaming event. The base `RemoteAgent` keeps it in memory:
 
 ```ts
-agent.currentSession  // Synced from server (read-only)
-agent.ui              // Shortcut to currentSession.trace
+agent.currentSession  // Synced from server on each event (in-memory only)
+agent.ui              // Chat items for rendering
 ```
+
+**Note:** The base `RemoteAgent` does not persist sessions. For localStorage persistence, use the React `useAgent` hook (see [react.md](./react.md)).
 
 ## UI Rendering
 
@@ -80,8 +82,8 @@ For reactive UI updates in React, use the `useAgent` hook:
 ```tsx
 import { useAgent } from 'connectonion/react';
 
-function ChatUI() {
-  const { ui, status, input, isProcessing } = useAgent('0x...');
+function ChatUI({ sessionId }: { sessionId: string }) {
+  const { ui, status, input, isProcessing } = useAgent('0x...', { sessionId });
 
   const handleSend = async (text: string) => {
     const response = await input(text);
@@ -112,16 +114,19 @@ function ChatUI() {
 
 ```ts
 const {
-  agent,          // RemoteAgent instance
-  ui,             // Reactive UIEvent[] - auto updates
-  status,         // Reactive 'idle' | 'working' | 'waiting'
-  currentSession, // Session state from server
+  status,         // 'idle' | 'working' | 'waiting'
+  ui,             // ChatItem[] - auto updates, triggers re-renders
+  sessionId,      // string - the session ID you passed in
   input,          // (prompt: string) => Promise<Response>
   reset,          // () => void - start fresh
-  isProcessing,   // boolean - true when busy
+  isProcessing,   // boolean - true when status !== 'idle'
   error,          // Error | null
-} = useAgent('0x...');
+  respond,        // (answer: string | string[]) => void - answer ask_user
+  respondToApproval, // (approved: boolean, ...) => void
+} = useAgent('0x...', { sessionId });
 ```
+
+Session auto-persists to localStorage by `sessionId`. See [react.md](./react.md) for details.
 
 See [react.md](./react.md) for complete React documentation.
 
@@ -232,8 +237,9 @@ agent.status  // 'idle' | 'working' | 'waiting'
 // React (reactive)
 import { useAgent } from 'connectonion/react';
 
-const { ui, status, input, isProcessing } = useAgent('0x...');
+const { ui, status, input, isProcessing } = useAgent('0x...', { sessionId });
 // ui and status auto-update, triggering re-renders
+// Session auto-persists to localStorage
 ```
 
 **Server events:** `user`, `agent`, `thinking`, `tool_call`, `tool_result`, `ask_user`

@@ -29,6 +29,7 @@ import {
   AgentStatus,
   ConnectOptions,
   SessionState,
+  ApprovalMode,
 } from '../connect';
 
 // Re-export types and utilities
@@ -39,6 +40,7 @@ export type {
   AgentStatus,
   ConnectOptions,
   AgentInfo,
+  ApprovalMode,
 } from '../connect';
 
 export { fetchAgentInfo } from '../connect';
@@ -173,10 +175,19 @@ export interface UseAgentReturn {
   sessionId: string;
   isProcessing: boolean;
   error: Error | null;
+  /** Current approval mode: 'safe' | 'plan' | 'accept_edits' | 'ulw' */
+  mode: ApprovalMode;
+  /** ULW mode: max turns before pausing */
+  ulwTurns: number | null;
+  /** ULW mode: turns used so far */
+  ulwTurnsUsed: number | null;
   input: (prompt: string, options?: { images?: string[]; timeoutMs?: number }) => Promise<Response>;
   respond: (answer: string | string[]) => void;
   respondToApproval: (approved: boolean, scope?: 'once' | 'session', mode?: 'reject_soft' | 'reject_hard' | 'reject_explain', feedback?: string) => void;
+  respondToUlwTurnsReached: (action: 'continue' | 'switch_mode', options?: { turns?: number; mode?: ApprovalMode }) => void;
   submitOnboard: (options: { inviteCode?: string; payment?: number }) => void;
+  /** Change approval mode: 'safe' | 'plan' | 'accept_edits' | 'ulw' */
+  setMode: (mode: ApprovalMode, options?: { turns?: number }) => void;
   reset: () => void;
 }
 
@@ -299,16 +310,38 @@ export function useAgent(
     agent.submitOnboard(options);
   };
 
+  const respondToUlwTurnsReached = (action: 'continue' | 'switch_mode', options?: { turns?: number; mode?: ApprovalMode }) => {
+    agent.respondToUlwTurnsReached(action, options);
+  };
+
+  const setMode = (mode: ApprovalMode, options?: { turns?: number }) => {
+    agent.setMode(mode, options);
+    // Update local session state to reflect mode change immediately
+    if (session) {
+      const updates: Partial<SessionState> = { mode };
+      if (mode === 'ulw') {
+        updates.ulw_turns = options?.turns || 100;
+        updates.ulw_turns_used = 0;
+      }
+      setSession({ ...session, ...updates });
+    }
+  };
+
   return {
     status,
     ui,
     sessionId,
     isProcessing: status !== 'idle',
     error,
+    mode: session?.mode || 'safe',
+    ulwTurns: session?.ulw_turns ?? null,
+    ulwTurnsUsed: session?.ulw_turns_used ?? null,
     input,
     respond,
     respondToApproval,
+    respondToUlwTurnsReached,
     submitOnboard,
+    setMode,
     reset,
   };
 }

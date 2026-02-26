@@ -188,6 +188,8 @@ export interface UseAgentReturn {
   submitOnboard: (options: { inviteCode?: string; payment?: number }) => void;
   /** Change approval mode: 'safe' | 'plan' | 'accept_edits' | 'ulw' */
   setMode: (mode: ApprovalMode, options?: { turns?: number }) => void;
+  /** Send persistent prompt — injected into system message every turn */
+  setPrompt: (prompt: string) => void;
   reset: () => void;
 }
 
@@ -254,10 +256,14 @@ export function useAgent(
     setError(null);
     setStatus('working');
 
-    // Set session before request (restore from store for server to continue conversation)
-    (agent as any)._currentSession = session
-      ? { ...session, session_id: sessionId }
-      : { session_id: sessionId, messages };
+    // Merge session - preserve mode from agent if set, then overlay store session
+    const agentSession = (agent as any)._currentSession || {};
+    (agent as any)._currentSession = {
+      ...agentSession,          // Preserve mode set by setMode()
+      ...(session || {}),       // Overlay with store session
+      session_id: sessionId,    // Ensure correct session ID
+      messages: session?.messages || messages,
+    };
 
     // Poll for UI updates and session state
     const pollInterval = setInterval(() => {
@@ -314,17 +320,22 @@ export function useAgent(
     agent.respondToUlwTurnsReached(action, options);
   };
 
-  const setMode = (mode: ApprovalMode, options?: { turns?: number }) => {
-    agent.setMode(mode, options);
-    // Update local session state to reflect mode change immediately
-    if (session) {
-      const updates: Partial<SessionState> = { mode };
-      if (mode === 'ulw') {
-        updates.ulw_turns = options?.turns || 100;
-        updates.ulw_turns_used = 0;
-      }
-      setSession({ ...session, ...updates });
+  const setPrompt = (prompt: string) => {
+    agent.setPrompt(prompt);
+  };
+
+  const setMode = (newMode: ApprovalMode, options?: { turns?: number }) => {
+    agent.setMode(newMode, options);
+    // Update local session state - create session if it doesn't exist
+    const updates: Partial<SessionState> = { mode: newMode };
+    if (newMode === 'ulw') {
+      updates.ulw_turns = options?.turns || 100;
+      updates.ulw_turns_used = 0;
     }
+    setSession(session
+      ? { ...session, ...updates }
+      : { session_id: sessionId, ...updates }
+    );
   };
 
   return {
@@ -342,6 +353,7 @@ export function useAgent(
     respondToUlwTurnsReached,
     submitOnboard,
     setMode,
+    setPrompt,
     reset,
   };
 }

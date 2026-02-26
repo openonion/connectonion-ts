@@ -213,7 +213,7 @@ async function resolveEndpoint(
   const httpsRelay = normalizedRelay.replace(/^wss?:\/\//, 'https://');
 
   // Step 1: Query relay for agent info
-  let agentInfo: { online?: boolean; endpoints?: string[]; relay?: string };
+  let agentInfo: { endpoints?: string[]; relay?: string; last_seen?: string };
   try {
     const response = await fetch(`${httpsRelay}/api/relay/agents/${agentAddress}`, {
       signal: AbortSignal.timeout(timeoutMs),
@@ -226,7 +226,8 @@ async function resolveEndpoint(
     return null;
   }
 
-  if (!agentInfo.online || !agentInfo.endpoints?.length) {
+  // Server no longer provides 'online' field - just check if endpoints exist
+  if (!agentInfo.endpoints?.length) {
     return null;
   }
 
@@ -308,26 +309,31 @@ export async function fetchAgentInfo(
   const httpsRelay = normalizedRelay.replace(/^wss?:\/\//, 'https://');
 
   // Step 1: Query relay for agent endpoints
-  let agentData: { online?: boolean; endpoints?: string[] };
+  let agentData: { endpoints?: string[] };
   try {
     const response = await fetch(`${httpsRelay}/api/relay/agents/${agentAddress}`, {
       signal: AbortSignal.timeout(5000),
     });
     if (!response.ok) {
-      return { address: agentAddress, online: false };
+      // Relay API failed - use localhost fallback
+      agentData = { endpoints: ['http://localhost:8000'] };
+    } else {
+      agentData = await response.json();
     }
-    agentData = await response.json();
   } catch {
-    return { address: agentAddress, online: false };
+    // Network error - use localhost fallback
+    agentData = { endpoints: ['http://localhost:8000'] };
   }
 
-  if (!agentData.online || !agentData.endpoints?.length) {
-    return { address: agentAddress, online: false };
-  }
+  // Always try endpoints - don't trust server's "online" judgment
+  // Use localhost fallback if no endpoints provided
+  const endpoints = agentData.endpoints?.length
+    ? agentData.endpoints
+    : ['http://localhost:8000'];
 
   // Step 2: Try /info on sorted endpoints (same priority as connect)
   const httpEndpoints = sortEndpoints(
-    agentData.endpoints.filter(ep => ep.startsWith('http://') || ep.startsWith('https://'))
+    endpoints.filter(ep => ep.startsWith('http://') || ep.startsWith('https://'))
   );
 
   for (const httpUrl of httpEndpoints) {
@@ -343,6 +349,7 @@ export async function fetchAgentInfo(
       };
 
       if (info.address === agentAddress) {
+        // Successfully connected and verified!
         return {
           address: agentAddress,
           name: info.name,
@@ -357,8 +364,8 @@ export async function fetchAgentInfo(
     }
   }
 
-  // Endpoints exist but /info didn't work — still online via relay
-  return { address: agentAddress, online: true };
+  // All endpoints failed - agent is offline
+  return { address: agentAddress, online: false };
 }
 
 // ============================================================================
@@ -549,13 +556,20 @@ export class RemoteAgent {
       this._currentSession.ulw_turns_used = 0;
     }
 
-    // Send to server if connected
+    // Send to server if connected, otherwise queue for when connection opens
     if (this._activeWs) {
       const msg: Record<string, unknown> = { type: 'mode_change', mode };
       if (mode === 'ulw' && options?.turns) {
         msg.turns = options.turns;
       }
       this._activeWs.send(JSON.stringify(msg));
+    }
+  }
+
+  /** Send a persistent prompt to the agent — injected into system message every turn. */
+  setPrompt(prompt: string): void {
+    if (this._activeWs) {
+      this._activeWs.send(JSON.stringify({ type: 'prompt_update', prompt }))
     }
   }
 

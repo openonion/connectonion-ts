@@ -1,7 +1,7 @@
 /**
  * @purpose Agent address/identity management with Ed25519 key generation, signing, and verification (Python address.py parity)
  * @llm-note
- *   Dependencies: imports from [crypto, fs, path (Node.js built-ins, conditional)] | imported by [src/connect.ts, src/index.ts, tests/connect.test.ts, tests/address.test.ts, tests/e2e/signedAgent.test.ts] | tested by [tests/address.test.ts]
+ *   Dependencies: imports from [crypto, fs, path (Node.js built-ins, conditional)] | imported by [src/connect/remote-agent.ts, src/index.ts, tests/connect.test.ts, tests/address.test.ts, tests/e2e/signedAgent.test.ts] | tested by [tests/address.test.ts]
  *   Data flow: generate() → creates Ed25519 keypair → exports to raw buffers → returns AddressData{address: 0x..., publicKey, privateKey} | sign(addressData, message) → recreates privateKey from buffer → signs with crypto.sign() → returns hex signature | verify(address, message, signature) → recreates publicKey from address → verifies with crypto.verify() → returns boolean
  *   State/Effects: reads/writes .co/keys/agent.key (Node.js) | reads/writes localStorage connectonion_keys (browser) | conditional require() for Node.js modules | detects environment via globalThis.window check
  *   Integration: exposes generate(), load(coDir), save(), sign(addressData, message), verify(address, message, signature), createSignedPayload(addressData, prompt, toAddress), AddressData type | browser variants: generateBrowser(), loadBrowser(), saveBrowser(), signBrowser() | canonical JSON with sorted keys for consistent signatures

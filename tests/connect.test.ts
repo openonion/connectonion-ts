@@ -523,7 +523,7 @@ describe('relay fallback', () => {
       enablePolling: false, // Disable polling so timeout rejects immediately
     });
 
-    await expect(agent.input('hello', 50)).rejects.toThrow(/timed out/);
+    await expect(agent.input('hello', { timeoutMs: 50 })).rejects.toThrow(/timed out/);
   });
 });
 

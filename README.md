@@ -331,7 +331,11 @@ src/
 ├── trust/
 │   ├── index.ts            # Trust levels (open/careful/strict)
 │   └── tools.ts            # Whitelist checks & verification
-├── connect.ts              # Remote agent connection via relay
+├── connect/
+│   ├── index.ts            # connect() factory + re-exports
+│   ├── types.ts            # ChatItem, Response, AgentStatus, ConnectOptions, etc.
+│   ├── endpoint.ts         # resolveEndpoint, fetchAgentInfo, utils
+│   └── remote-agent.ts     # RemoteAgent class
 ├── console.ts              # Dual logging (stderr + file)
 ├── types.ts                # Core TypeScript interfaces
 └── index.ts                # Public API exports

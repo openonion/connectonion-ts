@@ -50,7 +50,7 @@ export class RemoteAgent {
   private _relayUrl: string;
   private _directUrl?: string;
   private _resolvedEndpoint?: ResolvedEndpoint;
-  private _endpointResolved = false;
+  private _endpointResolutionAttempted = false;
   private _WS: WebSocketCtor;
 
   private _status: AgentStatus = 'idle';
@@ -61,15 +61,7 @@ export class RemoteAgent {
   private _pendingInputId: string | null = null;
   private _pendingSessionId: string | null = null;
 
-  /**
-   * Fallback counter for UI event IDs.
-   * Most events use backend-generated UUIDs; counter is only for client-only events.
-   */
-  private _uiIdCounter = 0;
 
-  private _enablePolling: boolean;
-  private _pollIntervalMs: number;
-  private _maxPollAttempts: number;
 
   private _lastPingTime: number = 0;
   private _healthCheckInterval: ReturnType<typeof setInterval> | null = null;
@@ -79,10 +71,6 @@ export class RemoteAgent {
     this._relayUrl = normalizeRelayBase(options.relayUrl || 'wss://oo.openonion.ai');
     this._directUrl = options.directUrl?.replace(/\/$/, '');
     this._WS = options.wsCtor || defaultWebSocketCtor();
-
-    this._enablePolling = options.enablePolling !== false;
-    this._pollIntervalMs = options.pollIntervalMs || 10000;
-    this._maxPollAttempts = options.maxPollAttempts || 30;
 
     if (options.keys) {
       this._keys = options.keys;
@@ -142,13 +130,12 @@ export class RemoteAgent {
 
   reset(): void {
     if (this._activeWs) {
-      try { this._activeWs.close(); } catch { /* ignore */ }
+      this._activeWs.close();
       this._activeWs = null;
     }
     this._currentSession = null;
     this._chatItems = [];
     this._status = 'idle';
-    this._uiIdCounter = 0;
   }
 
   resetConversation(): void {
@@ -242,48 +229,8 @@ export class RemoteAgent {
     }
   }
 
-  private async _pollForResult(sessionId: string): Promise<string> {
-    const baseUrl = this._directUrl || this._relayUrl.replace(/^wss?:\/\//, 'https://');
-    const sessionUrl = `${baseUrl}/sessions/${sessionId}`;
-
-    for (let attempt = 0; attempt < this._maxPollAttempts; attempt++) {
-      try {
-        const response = await fetch(sessionUrl);
-
-        if (!response.ok) {
-          if (response.status === 404) {
-            throw new Error('Session not found or expired');
-          }
-          throw new Error(`Session API error: ${response.status}`);
-        }
-
-        const data = await response.json() as { status?: string; result?: string };
-
-        if (data.status === 'done' && data.result) {
-          return data.result;
-        }
-
-        if (data.status === 'running') {
-          await new Promise(resolve => setTimeout(resolve, this._pollIntervalMs));
-          continue;
-        }
-
-        throw new Error(`Unexpected session status: ${data.status}`);
-      } catch (error) {
-        if (attempt === this._maxPollAttempts - 1) {
-          throw error;
-        }
-        await new Promise(resolve => setTimeout(resolve, this._pollIntervalMs));
-      }
-    }
-
-    throw new Error('Polling timeout: Result not ready after maximum attempts');
-  }
-
   private _startHealthCheck(
     ws: WebSocketLike,
-    sessionId: string,
-    resolve: (value: Response) => void,
     reject: (reason?: any) => void
   ): void {
     this._stopHealthCheck();
@@ -293,19 +240,8 @@ export class RemoteAgent {
 
       if (timeSinceLastPing > 60000) {
         this._stopHealthCheck();
-        try { ws.close(); } catch { /* ignore */ }
-
-        if (this._enablePolling) {
-          this._pollForResult(sessionId)
-            .then((result) => {
-              resolve({ text: result, done: true });
-            })
-            .catch((pollError) => {
-              reject(new Error(`Connection health check failed and polling failed: ${pollError}`));
-            });
-        } else {
-          reject(new Error('Connection health check failed: No PING received for 60 seconds'));
-        }
+        ws.close();
+        reject(new Error('Connection health check failed: No PING received for 60 seconds'));
       }
     }, 10000);
   }
@@ -318,9 +254,9 @@ export class RemoteAgent {
   }
 
   private async _tryResolveEndpoint(): Promise<void> {
-    if (this._endpointResolved || this._directUrl) return;
+    if (this._endpointResolutionAttempted || this._directUrl) return;
 
-    this._endpointResolved = true;
+    this._endpointResolutionAttempted = true;
 
     if (!this.address.startsWith('0x') || this.address.length !== 66) return;
 
@@ -360,28 +296,18 @@ export class RemoteAgent {
 
     return new Promise<Response>((resolve, reject) => {
       let settled = false;
-      const timer = setTimeout(async () => {
+      const timer = setTimeout(() => {
         if (!settled) {
           settled = true;
           this._status = 'idle';
-          try { ws.close(); } catch { /* ignore */ }
-
-          if (this._enablePolling) {
-            try {
-              const result = await this._pollForResult(sessionId);
-              resolve({ text: result, done: true });
-            } catch (pollError) {
-              reject(new Error(`Connection timed out and polling failed: ${pollError}`));
-            }
-          } else {
-            reject(new Error('Connection timed out'));
-          }
+          ws.close();
+          reject(new Error('Connection timed out'));
         }
       }, timeoutMs);
 
       ws.onopen = () => {
         this._lastPingTime = Date.now();
-        this._startHealthCheck(ws, sessionId, resolve, reject);
+        this._startHealthCheck(ws, reject);
 
         const payload: Record<string, unknown> = {
           prompt,
@@ -415,187 +341,158 @@ export class RemoteAgent {
           inputMessage.session = { session_id: sessionId };
         }
 
-        try {
-          ws.send(JSON.stringify(inputMessage));
-        } catch (e) {
-          this._stopHealthCheck();
-          clearTimeout(timer);
-          if (!settled) {
-            settled = true;
-            this._status = 'idle';
-            try { ws.close(); } catch { /* ignore */ }
-            reject(e);
-          }
-        }
+        ws.send(JSON.stringify(inputMessage));
       };
 
       ws.onmessage = (evt: { data: unknown }) => {
         if (settled) return;
-        try {
-          const raw = typeof evt.data === 'string' ? evt.data : String(evt.data);
-          const data = JSON.parse(raw);
+        const raw = typeof evt.data === 'string' ? evt.data : String(evt.data);
+        const data = JSON.parse(raw);
 
-          if (data?.type === 'PING') {
-            this._lastPingTime = Date.now();
-            try {
-              ws.send(JSON.stringify({ type: 'PONG' }));
-            } catch {
-              // Ignore send errors
-            }
-            return;
+        if (data?.type === 'PING') {
+          this._lastPingTime = Date.now();
+          ws.send(JSON.stringify({ type: 'PONG' }));
+          return;
+        }
+
+        if (data?.type === 'session_sync' && data.session) {
+          this._currentSession = data.session;
+        }
+
+        if (data?.type === 'mode_changed' && data.mode) {
+          if (!this._currentSession) {
+            this._currentSession = { mode: data.mode };
+          } else {
+            this._currentSession.mode = data.mode;
           }
+        }
 
-          if (data?.type === 'session_sync' && data.session) {
+        if (data?.type === 'ulw_turns_reached') {
+          this._status = 'waiting';
+          if (this._currentSession) {
+            this._currentSession.ulw_turns_used = data.turns_used;
+          }
+          this._addChatItem({
+            type: 'ulw_turns_reached',
+            turns_used: data.turns_used as number,
+            max_turns: data.max_turns as number,
+          });
+        }
+
+        if (data?.type === 'llm_call' || data?.type === 'llm_result' ||
+            data?.type === 'tool_call' || data?.type === 'tool_result' ||
+            data?.type === 'thinking' || data?.type === 'assistant' ||
+            data?.type === 'intent' || data?.type === 'eval' || data?.type === 'compact' ||
+            data?.type === 'tool_blocked') {
+          this._handleStreamEvent(data);
+          if (data.session) {
+            this._currentSession = data.session;
+          }
+        }
+
+        if (data?.type === 'ask_user') {
+          this._status = 'waiting';
+          this._addChatItem({ type: 'ask_user', text: data.text || '', options: data.options || [], multi_select: data.multi_select || false });
+        }
+
+        if (data?.type === 'approval_needed') {
+          this._status = 'waiting';
+          this._addChatItem({
+            type: 'approval_needed',
+            tool: data.tool as string,
+            arguments: data.arguments as Record<string, unknown>,
+            ...(data.description && { description: data.description as string }),
+            ...(data.batch_remaining && { batch_remaining: data.batch_remaining as Array<{ tool: string; arguments: string }> }),
+          });
+        }
+
+        if (data?.type === 'ONBOARD_REQUIRED') {
+          this._status = 'waiting';
+          this._pendingPrompt = prompt;
+          this._pendingInputId = inputId;
+          this._pendingSessionId = sessionId;
+          this._addChatItem({
+            type: 'onboard_required',
+            methods: (data.methods || []) as string[],
+            paymentAmount: data.payment_amount as number | undefined,
+          });
+        }
+
+        if (data?.type === 'ONBOARD_SUCCESS') {
+          this._addChatItem({
+            type: 'onboard_success',
+            level: data.level as string,
+            message: data.message as string,
+          });
+
+          if (this._pendingPrompt && this._activeWs) {
+            this._status = 'working';
+            const retryPrompt = this._pendingPrompt;
+            const retryInputId = this._pendingInputId || generateUUID();
+            this._pendingPrompt = null;
+            this._pendingInputId = null;
+
+            const retryPayload: Record<string, unknown> = {
+              prompt: retryPrompt,
+              timestamp: Math.floor(Date.now() / 1000),
+            };
+            if (!isDirect) retryPayload.to = this.address;
+
+            const retrySigned = this._signPayload(retryPayload);
+
+            const retryMessage: Record<string, unknown> = {
+              type: 'INPUT',
+              input_id: retryInputId,
+              prompt: retryPrompt,
+              ...retrySigned,
+            };
+            if (!isDirect) retryMessage.to = this.address;
+            if (this._currentSession) {
+              retryMessage.session = { ...this._currentSession, session_id: this._pendingSessionId };
+            } else {
+              retryMessage.session = { session_id: this._pendingSessionId };
+            }
+
+            this._activeWs.send(JSON.stringify(retryMessage));
+            this._pendingSessionId = null;
+          }
+        }
+
+        const isOutputForUs = isDirect
+          ? data?.type === 'OUTPUT'
+          : data?.type === 'OUTPUT' && data?.input_id === inputId;
+        if (isOutputForUs) {
+          settled = true;
+          clearTimeout(timer);
+          this._stopHealthCheck();
+          this._removeOptimisticThinking();
+          this._status = 'idle';
+
+          if (data.session) {
             this._currentSession = data.session;
           }
 
-          if (data?.type === 'mode_changed' && data.mode) {
-            if (!this._currentSession) {
-              this._currentSession = { mode: data.mode };
-            } else {
-              this._currentSession.mode = data.mode;
+          const result = data.result || '';
+          if (result) {
+            const lastAgent = this._chatItems.filter((e): e is ChatItem & { type: 'agent' } => e.type === 'agent').pop();
+            if (!lastAgent || lastAgent.content !== result) {
+              this._addChatItem({ type: 'agent', content: result });
             }
           }
 
-          if (data?.type === 'ulw_turns_reached') {
-            this._status = 'waiting';
-            if (this._currentSession) {
-              this._currentSession.ulw_turns_used = data.turns_used;
-            }
-            this._addChatItem({
-              type: 'ulw_turns_reached',
-              turns_used: data.turns_used as number,
-              max_turns: data.max_turns as number,
-            });
-          }
+          this._activeWs = null;
+          ws.close();
+          resolve({ text: result, done: true });
+        }
 
-          if (data?.type === 'llm_call' || data?.type === 'llm_result' ||
-              data?.type === 'tool_call' || data?.type === 'tool_result' ||
-              data?.type === 'thinking' || data?.type === 'assistant' ||
-              data?.type === 'intent' || data?.type === 'eval' || data?.type === 'compact' ||
-              data?.type === 'tool_blocked') {
-            this._handleStreamEvent(data);
-
-            if (data.session) {
-              this._currentSession = data.session;
-            }
-          }
-
-          if (data?.type === 'ask_user') {
-            this._status = 'waiting';
-            this._addChatItem({ type: 'ask_user', text: data.text || '', options: data.options || [], multi_select: data.multi_select || false });
-          }
-
-          if (data?.type === 'approval_needed') {
-            this._status = 'waiting';
-            this._addChatItem({
-              type: 'approval_needed',
-              tool: data.tool as string,
-              arguments: data.arguments as Record<string, unknown>,
-              ...(data.description && { description: data.description as string }),
-              ...(data.batch_remaining && { batch_remaining: data.batch_remaining as Array<{ tool: string; arguments: string }> }),
-            });
-          }
-
-          if (data?.type === 'ONBOARD_REQUIRED') {
-            this._status = 'waiting';
-            this._pendingPrompt = prompt;
-            this._pendingInputId = inputId;
-            this._pendingSessionId = sessionId;
-            this._addChatItem({
-              type: 'onboard_required',
-              methods: (data.methods || []) as string[],
-              paymentAmount: data.payment_amount as number | undefined,
-            });
-          }
-
-          if (data?.type === 'ONBOARD_SUCCESS') {
-            this._addChatItem({
-              type: 'onboard_success',
-              level: data.level as string,
-              message: data.message as string,
-            });
-
-            if (this._pendingPrompt && this._activeWs) {
-              this._status = 'working';
-              const retryPrompt = this._pendingPrompt;
-              const retryInputId = this._pendingInputId || generateUUID();
-              this._pendingPrompt = null;
-              this._pendingInputId = null;
-
-              const retryPayload: Record<string, unknown> = {
-                prompt: retryPrompt,
-                timestamp: Math.floor(Date.now() / 1000),
-              };
-              if (!isDirect) {
-                retryPayload.to = this.address;
-              }
-
-              const retrySigned = this._signPayload(retryPayload);
-
-              const retryMessage: Record<string, unknown> = {
-                type: 'INPUT',
-                input_id: retryInputId,
-                prompt: retryPrompt,
-                ...retrySigned,
-              };
-              if (!isDirect) {
-                retryMessage.to = this.address;
-              }
-              if (this._currentSession) {
-                retryMessage.session = { ...this._currentSession, session_id: this._pendingSessionId };
-              } else {
-                retryMessage.session = { session_id: this._pendingSessionId };
-              }
-
-              this._activeWs.send(JSON.stringify(retryMessage));
-              this._pendingSessionId = null;
-            }
-          }
-
-          const isOutputForUs = isDirect
-            ? data?.type === 'OUTPUT'
-            : data?.type === 'OUTPUT' && data?.input_id === inputId;
-          if (isOutputForUs) {
-            settled = true;
-            clearTimeout(timer);
-            this._stopHealthCheck();
-            this._removeOptimisticThinking();
-            this._status = 'idle';
-
-            if (data.session) {
-              this._currentSession = data.session;
-            }
-
-            const result = data.result || '';
-            if (result) {
-              const lastAgent = this._chatItems.filter((e): e is ChatItem & { type: 'agent' } => e.type === 'agent').pop();
-              if (!lastAgent || lastAgent.content !== result) {
-                this._addChatItem({ type: 'agent', content: result });
-              }
-            }
-
-            this._activeWs = null;
-            try { ws.close(); } catch { /* ignore */ }
-            resolve({ text: result, done: true });
-          }
-
-          if (data?.type === 'ERROR') {
-            settled = true;
-            clearTimeout(timer);
-            this._stopHealthCheck();
-            this._status = 'idle';
-            this._activeWs = null;
-            try { ws.close(); } catch { /* ignore */ }
-            reject(new Error(`Agent error: ${String(data.message || data.error || 'Unknown error')}`));
-          }
-        } catch (e) {
+        if (data?.type === 'ERROR') {
           settled = true;
           clearTimeout(timer);
           this._stopHealthCheck();
           this._status = 'idle';
-          try { ws.close(); } catch { /* ignore */ }
-          reject(e);
+          this._activeWs = null;
+          ws.close();
+          reject(new Error(`Agent error: ${String(data.message || data.error || 'Unknown error')}`));
         }
       };
 
@@ -605,16 +502,12 @@ export class RemoteAgent {
         this._stopHealthCheck();
         this._status = 'idle';
         clearTimeout(timer);
-        try { ws.close(); } catch { /* ignore */ }
+        ws.close();
 
-        if (this._enablePolling) {
-          try {
-            const result = await this._pollForResult(sessionId);
-            resolve({ text: result, done: true });
-            return;
-          } catch {
-            // Polling failed, fall through to original error
-          }
+        // Clear stale direct endpoint so next call re-resolves
+        if (isDirect && !this._directUrl) {
+          this._resolvedEndpoint = undefined;
+          this._endpointResolutionAttempted = false;
         }
 
         reject(new Error(`WebSocket error: ${String(err)}`));
@@ -628,14 +521,10 @@ export class RemoteAgent {
           this._status = 'idle';
           clearTimeout(timer);
 
-          if (this._enablePolling) {
-            try {
-              const result = await this._pollForResult(sessionId);
-              resolve({ text: result, done: true });
-              return;
-            } catch {
-              // Polling failed, fall through to original error
-            }
+          // Clear stale direct endpoint so next call re-resolves
+          if (isDirect && !this._directUrl) {
+            this._resolvedEndpoint = undefined;
+            this._endpointResolutionAttempted = false;
           }
 
           reject(new Error('Connection closed before response'));
@@ -861,7 +750,7 @@ export class RemoteAgent {
   }
 
   private _addChatItem(event: Partial<ChatItem> & { type: ChatItemType }): void {
-    const id = (event as { id?: string }).id || String(++this._uiIdCounter);
+    const id = (event as { id?: string }).id || generateUUID();
     this._chatItems.push({ ...event, id } as ChatItem);
   }
 

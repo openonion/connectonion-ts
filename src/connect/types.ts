@@ -91,12 +91,6 @@ export interface ConnectOptions {
   directUrl?: string;
   /** Custom WebSocket constructor */
   wsCtor?: WebSocketCtor;
-  /** Enable polling fallback when WebSocket fails (default: true) */
-  enablePolling?: boolean;
-  /** Polling interval in milliseconds (default: 10000 / 10 seconds) */
-  pollIntervalMs?: number;
-  /** Maximum polling attempts (default: 30 / 5 minutes of polling) */
-  maxPollAttempts?: number;
 }
 
 // ============================================================================

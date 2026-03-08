@@ -68,44 +68,27 @@ export async function resolveEndpoint(
   const normalizedRelay = normalizeRelayBase(relayUrl);
   const httpsRelay = normalizedRelay.replace(/^wss?:\/\//, 'https://');
 
-  let agentInfo: { endpoints?: string[]; relay?: string; last_seen?: string };
-  try {
-    const response = await fetch(`${httpsRelay}/api/relay/agents/${agentAddress}`, {
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!response.ok) {
-      return null;
-    }
-    agentInfo = await response.json();
-  } catch {
-    return null;
-  }
+  const response = await fetch(`${httpsRelay}/api/relay/agents/${agentAddress}`, {
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) return null;
 
-  if (!agentInfo.endpoints?.length) {
-    return null;
-  }
+  const agentInfo = await response.json() as { endpoints?: string[] };
+  if (!agentInfo.endpoints?.length) return null;
 
-  const sortedEndpoints = sortEndpoints(agentInfo.endpoints);
-  const httpEndpoints = sortedEndpoints.filter(ep => ep.startsWith('http://') || ep.startsWith('https://'));
+  const httpEndpoints = sortEndpoints(agentInfo.endpoints).filter(ep => ep.startsWith('http'));
 
   for (const httpUrl of httpEndpoints) {
-    try {
-      const infoResponse = await fetch(`${httpUrl}/info`, {
-        signal: AbortSignal.timeout(timeoutMs),
-      });
+    const infoResponse = await fetch(`${httpUrl}/info`, {
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!infoResponse.ok) continue;
 
-      if (!infoResponse.ok) continue;
-
-      const info = await infoResponse.json() as { address?: string };
-
-      if (info.address === agentAddress) {
-        const baseUrl = httpUrl.replace(/^https?:\/\//, '');
-        const protocol = httpUrl.startsWith('https') ? 'wss' : 'ws';
-        const wsUrl = `${protocol}://${baseUrl}/ws`;
-        return { httpUrl, wsUrl };
-      }
-    } catch {
-      continue;
+    const info = await infoResponse.json() as { address?: string };
+    if (info.address === agentAddress) {
+      const baseUrl = httpUrl.replace(/^https?:\/\//, '');
+      const protocol = httpUrl.startsWith('https') ? 'wss' : 'ws';
+      return { httpUrl, wsUrl: `${protocol}://${baseUrl}/ws` };
     }
   }
 
@@ -133,55 +116,26 @@ export async function fetchAgentInfo(
   agentAddress: string,
   relayUrl = DEFAULT_RELAY,
 ): Promise<AgentInfo> {
-  const normalizedRelay = normalizeRelayBase(relayUrl);
-  const httpsRelay = normalizedRelay.replace(/^wss?:\/\//, 'https://');
+  const httpsRelay = normalizeRelayBase(relayUrl).replace(/^wss?:\/\//, 'https://');
 
-  let agentData: { endpoints?: string[] };
-  try {
-    const response = await fetch(`${httpsRelay}/api/relay/agents/${agentAddress}`, {
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!response.ok) {
-      agentData = { endpoints: ['http://localhost:8000'] };
-    } else {
-      agentData = await response.json();
-    }
-  } catch {
-    agentData = { endpoints: ['http://localhost:8000'] };
-  }
+  const relayRes = await fetch(`${httpsRelay}/api/relay/agents/${agentAddress}`, {
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!relayRes.ok) return { address: agentAddress, online: false };
 
-  const endpoints = agentData.endpoints?.length
-    ? agentData.endpoints
-    : ['http://localhost:8000'];
-
-  const httpEndpoints = sortEndpoints(
-    endpoints.filter(ep => ep.startsWith('http://') || ep.startsWith('https://'))
-  );
+  const { endpoints = [] } = await relayRes.json() as { endpoints?: string[] };
+  const httpEndpoints = sortEndpoints(endpoints.filter(ep => ep.startsWith('http')));
 
   for (const httpUrl of httpEndpoints) {
-    try {
-      const infoResponse = await fetch(`${httpUrl}/info`, {
-        signal: AbortSignal.timeout(3000),
-      });
-      if (!infoResponse.ok) continue;
+    const infoRes = await fetch(`${httpUrl}/info`, { signal: AbortSignal.timeout(3000) });
+    if (!infoRes.ok) continue;
 
-      const info = await infoResponse.json() as {
-        name?: string; address?: string; tools?: string[];
-        trust?: string; version?: string;
-      };
-
-      if (info.address === agentAddress) {
-        return {
-          address: agentAddress,
-          name: info.name,
-          tools: info.tools,
-          trust: info.trust,
-          version: info.version,
-          online: true,
-        };
-      }
-    } catch {
-      continue;
+    const info = await infoRes.json() as {
+      name?: string; address?: string; tools?: string[];
+      trust?: string; version?: string;
+    };
+    if (info.address === agentAddress) {
+      return { address: agentAddress, name: info.name, tools: info.tools, trust: info.trust, version: info.version, online: true };
     }
   }
 

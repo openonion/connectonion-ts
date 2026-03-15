@@ -27,6 +27,7 @@ import {
   Response,
   ChatItem,
   AgentStatus,
+  ConnectionState,
   ConnectOptions,
   SessionState,
   ApprovalMode,
@@ -38,6 +39,7 @@ export type {
   ChatItem,
   ChatItemType,
   AgentStatus,
+  ConnectionState,
   ConnectOptions,
   AgentInfo,
   ApprovalMode,
@@ -171,6 +173,7 @@ function getStore(address: string, sessionId: string) {
 
 export interface UseAgentReturn {
   status: AgentStatus;
+  connectionState: ConnectionState;
   ui: ChatItem[];
   sessionId: string;
   isProcessing: boolean;
@@ -345,6 +348,7 @@ export function useAgent(
 
   return {
     status,
+    connectionState: agent.connectionState,
     ui,
     sessionId,
     isProcessing: status !== 'idle',

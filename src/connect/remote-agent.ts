@@ -4,6 +4,7 @@ import {
   ApprovalMode,
   ChatItem,
   ChatItemType,
+  ConnectionState,
   ConnectOptions,
   ResolvedEndpoint,
   Response,
@@ -54,6 +55,7 @@ export class RemoteAgent {
   private _WS: WebSocketCtor;
 
   private _status: AgentStatus = 'idle';
+  private _connectionState: ConnectionState = 'disconnected';
   private _currentSession: SessionState | null = null;
   private _chatItems: ChatItem[] = [];
   private _activeWs: WebSocketLike | null = null;
@@ -87,6 +89,10 @@ export class RemoteAgent {
 
   get status(): AgentStatus {
     return this._status;
+  }
+
+  get connectionState(): ConnectionState {
+    return this._connectionState;
   }
 
   get currentSession(): SessionState | null {
@@ -140,6 +146,7 @@ export class RemoteAgent {
     this._currentSession = null;
     this._chatItems = [];
     this._status = 'idle';
+    this._connectionState = 'disconnected';
     this._shouldReconnect = false;
     this._reconnectAttempts = 0;
   }
@@ -293,10 +300,12 @@ export class RemoteAgent {
     if (this._reconnectAttempts >= this._maxReconnectAttempts) {
       this._reconnectAttempts = 0;
       this._shouldReconnect = false;
+      this._connectionState = 'disconnected';
       reject(new Error('Max reconnection attempts reached'));
       return;
     }
 
+    this._connectionState = 'reconnecting';
     this._reconnectAttempts++;
     const delay = Math.min(
       this._reconnectBaseDelay * Math.pow(2, this._reconnectAttempts - 1),
@@ -339,6 +348,7 @@ export class RemoteAgent {
 
     ws.onopen = () => {
       console.log('[ConnectOnion] Reconnected successfully');
+      this._connectionState = 'connected';
       this._reconnectAttempts = 0;
       this._lastPingTime = Date.now();
       this._startHealthCheck(ws, reject);
@@ -401,6 +411,7 @@ export class RemoteAgent {
             state.settled = true;
             this._status = 'idle';
             this._shouldReconnect = false;
+        this._connectionState = 'disconnected';
             ws.close();
             reject(new Error('Connection timed out'));
           }
@@ -408,6 +419,7 @@ export class RemoteAgent {
       };
 
       ws.onopen = () => {
+        this._connectionState = 'connected';
         this._lastPingTime = Date.now();
         this._startHealthCheck(ws, reject);
 
@@ -602,6 +614,7 @@ export class RemoteAgent {
         this._removeOptimisticThinking();
         this._status = 'idle';
         this._shouldReconnect = false;
+        this._connectionState = 'disconnected';
         this._reconnectAttempts = 0;
 
         if (data.session) {
@@ -637,6 +650,7 @@ export class RemoteAgent {
         this._stopHealthCheck();
         this._status = 'idle';
         this._shouldReconnect = false;
+        this._connectionState = 'disconnected';
         this._activeWs = null;
         ws.close();
         reject(new Error(`Agent error: ${String(data.message || data.error || 'Unknown error')}`));
@@ -660,6 +674,7 @@ export class RemoteAgent {
         state.settled = true;
         this._status = 'idle';
         this._shouldReconnect = false;
+        this._connectionState = 'disconnected';
         reject(new Error(`WebSocket error: ${String(err)}`));
       }
     };
@@ -681,6 +696,7 @@ export class RemoteAgent {
           state.settled = true;
           this._status = 'idle';
           this._shouldReconnect = false;
+        this._connectionState = 'disconnected';
           reject(new Error('Connection closed before response'));
         }
       }

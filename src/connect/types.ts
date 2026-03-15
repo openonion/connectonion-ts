@@ -117,3 +117,5 @@ export interface SessionState {
 export type ApprovalMode = 'safe' | 'plan' | 'accept_edits' | 'ulw';
 
 export type AgentStatus = 'idle' | 'working' | 'waiting';
+
+export type ConnectionState = 'disconnected' | 'connected' | 'reconnecting';

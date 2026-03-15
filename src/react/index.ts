@@ -184,6 +184,7 @@ export interface UseAgentReturn {
   input: (prompt: string, options?: { images?: string[]; timeoutMs?: number }) => Promise<Response>;
   respond: (answer: string | string[]) => void;
   respondToApproval: (approved: boolean, scope?: 'once' | 'session', mode?: 'reject_soft' | 'reject_hard' | 'reject_explain', feedback?: string) => void;
+  respondToPlanReview: (message: string) => void;
   respondToUlwTurnsReached: (action: 'continue' | 'switch_mode', options?: { turns?: number; mode?: ApprovalMode }) => void;
   submitOnboard: (options: { inviteCode?: string; payment?: number }) => void;
   /** Change approval mode: 'safe' | 'plan' | 'accept_edits' | 'ulw' */
@@ -312,6 +313,10 @@ export function useAgent(
     agent.respondToApproval(approved, scope, mode, feedback);
   };
 
+  const respondToPlanReview = (message: string) => {
+    agent.respondToPlanReview(message);
+  };
+
   const submitOnboard = (options: { inviteCode?: string; payment?: number }) => {
     agent.submitOnboard(options);
   };
@@ -350,6 +355,7 @@ export function useAgent(
     input,
     respond,
     respondToApproval,
+    respondToPlanReview,
     respondToUlwTurnsReached,
     submitOnboard,
     setMode,

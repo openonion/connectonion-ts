@@ -61,24 +61,14 @@ export class RemoteAgent {
   private _pendingInputId: string | null = null;
   private _pendingSessionId: string | null = null;
 
-
-
   private _lastPingTime: number = 0;
   private _healthCheckInterval: ReturnType<typeof setInterval> | null = null;
 
   // Reconnection state
   private _reconnectAttempts: number = 0;
   private _maxReconnectAttempts: number = 3;
-  private _reconnectBaseDelay: number = 1000; // Start with 1 second
-  private _lastConnectionParams: {
-    prompt: string;
-    timeoutMs: number;
-    images?: string[];
-    inputId: string;
-    sessionId: string;
-    wsUrl: string;
-    isDirect: boolean;
-  } | null = null;
+  private _reconnectBaseDelay: number = 1000;
+  private _shouldReconnect: boolean = false;
 
   constructor(agentAddress: string, options: ConnectOptions = {}) {
     this.address = agentAddress;
@@ -150,6 +140,8 @@ export class RemoteAgent {
     this._currentSession = null;
     this._chatItems = [];
     this._status = 'idle';
+    this._shouldReconnect = false;
+    this._reconnectAttempts = 0;
   }
 
   resetConversation(): void {
@@ -209,6 +201,16 @@ export class RemoteAgent {
     }));
   }
 
+  respondToPlanReview(message: string): void {
+    if (!this._activeWs) {
+      throw new Error('No active connection to respond to');
+    }
+    this._activeWs.send(JSON.stringify({
+      type: 'PLAN_REVIEW_RESPONSE',
+      message,
+    }));
+  }
+
   respondToUlwTurnsReached(action: 'continue' | 'switch_mode', options?: { turns?: number; mode?: ApprovalMode }): void {
     if (!this._activeWs) {
       throw new Error('No active connection to respond to ULW');
@@ -243,6 +245,18 @@ export class RemoteAgent {
     }
   }
 
+  private _deriveWsUrl(): { wsUrl: string; isDirect: boolean } {
+    if (this._directUrl) {
+      const base = this._directUrl.replace(/^https?:\/\//, '');
+      const protocol = this._directUrl.startsWith('https') ? 'wss' : 'ws';
+      return { wsUrl: `${protocol}://${base}/ws`, isDirect: true };
+    }
+    if (this._resolvedEndpoint) {
+      return { wsUrl: this._resolvedEndpoint.wsUrl, isDirect: true };
+    }
+    return { wsUrl: `${this._relayUrl}/ws/input`, isDirect: false };
+  }
+
   private _startHealthCheck(
     ws: WebSocketLike,
     reject: (reason?: any) => void
@@ -267,18 +281,18 @@ export class RemoteAgent {
     }
   }
 
-  private async _attemptReconnect(
+  private _attemptReconnect(
     resolve: (value: Response) => void,
     reject: (reason?: any) => void
-  ): Promise<void> {
-    if (!this._lastConnectionParams) {
-      reject(new Error('No connection parameters saved for reconnection'));
+  ): void {
+    if (!this._currentSession?.session_id) {
+      reject(new Error('No session to reconnect'));
       return;
     }
 
     if (this._reconnectAttempts >= this._maxReconnectAttempts) {
       this._reconnectAttempts = 0;
-      this._lastConnectionParams = null;
+      this._shouldReconnect = false;
       reject(new Error('Max reconnection attempts reached'));
       return;
     }
@@ -286,85 +300,68 @@ export class RemoteAgent {
     this._reconnectAttempts++;
     const delay = Math.min(
       this._reconnectBaseDelay * Math.pow(2, this._reconnectAttempts - 1),
-      30000 // Max 30 seconds
+      30000
     );
 
     console.log(`[ConnectOnion] Connection lost. Reconnecting in ${delay}ms (attempt ${this._reconnectAttempts}/${this._maxReconnectAttempts})...`);
 
     setTimeout(() => {
-      if (this._lastConnectionParams) {
-        this._reconnectWithParams(resolve, reject).catch(reject);
-      }
+      this._reconnect(resolve, reject);
     }, delay);
   }
 
-  private async _reconnectWithParams(
+  private _reconnect(
     resolve: (value: Response) => void,
     reject: (reason?: any) => void
-  ): Promise<void> {
-    if (!this._lastConnectionParams) {
-      reject(new Error('No connection parameters for reconnection'));
+  ): void {
+    const sessionId = this._currentSession?.session_id;
+    if (!sessionId) {
+      reject(new Error('No session to reconnect'));
       return;
     }
 
-    const params = this._lastConnectionParams;
-    const ws = new this._WS(params.wsUrl);
+    const { wsUrl, isDirect } = this._deriveWsUrl();
+    const ws = new this._WS(wsUrl);
     this._activeWs = ws;
     this._status = 'working';
 
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        this._status = 'idle';
-        ws.close();
-        this._attemptReconnect(resolve, reject);
-      }
-    }, params.timeoutMs);
+    const state = {
+      settled: false,
+      timer: setTimeout(() => {
+        if (!state.settled) {
+          state.settled = true;
+          this._status = 'idle';
+          ws.close();
+          this._attemptReconnect(resolve, reject);
+        }
+      }, 600000),
+    };
 
     ws.onopen = () => {
       console.log('[ConnectOnion] Reconnected successfully');
-      this._reconnectAttempts = 0; // Reset on successful connection
+      this._reconnectAttempts = 0;
       this._lastPingTime = Date.now();
       this._startHealthCheck(ws, reject);
 
+      // Send full session for server-side merge (iteration count comparison)
       const payload: Record<string, unknown> = {
-        prompt: params.prompt,
+        prompt: '',
         timestamp: Math.floor(Date.now() / 1000),
       };
-
-      if (!params.isDirect) {
-        payload.to = this.address;
-      }
-
+      if (!isDirect) payload.to = this.address;
       const signed = this._signPayload(payload);
 
-      const inputMessage: Record<string, unknown> = {
+      ws.send(JSON.stringify({
         type: 'INPUT',
-        input_id: params.inputId,
-        prompt: params.prompt,
+        input_id: generateUUID(),
+        prompt: '',
         ...signed,
-      };
-
-      if (params.images && params.images.length > 0) {
-        inputMessage.images = params.images;
-      }
-
-      if (!params.isDirect) {
-        inputMessage.to = this.address;
-      }
-
-      if (this._currentSession) {
-        inputMessage.session = { ...this._currentSession, session_id: params.sessionId };
-      } else {
-        inputMessage.session = { session_id: params.sessionId };
-      }
-
-      ws.send(JSON.stringify(inputMessage));
+        ...(!isDirect && { to: this.address }),
+        session: { ...this._currentSession, session_id: sessionId },
+      }));
     };
 
-    // Reuse message handlers (will be extracted to shared method)
-    this._setupWebSocketHandlers(ws, params, settled, timer, resolve, reject);
+    this._attachMessageHandlers(ws, generateUUID(), isDirect, state, resolve, reject);
   }
 
   private async _tryResolveEndpoint(): Promise<void> {
@@ -389,36 +386,26 @@ export class RemoteAgent {
     this._status = 'working';
 
     const inputId = generateUUID();
-    // Session ID: client-generated UUID (server uses this for storage/reconnection)
     const sessionId = this._currentSession?.session_id || generateUUID();
-
-    let wsUrl: string;
-    let isDirect = false;
-    if (this._directUrl) {
-      const baseUrl = this._directUrl.replace(/^https?:\/\//, '');
-      const protocol = this._directUrl.startsWith('https') ? 'wss' : 'ws';
-      wsUrl = `${protocol}://${baseUrl}/ws`;
-      isDirect = true;
-    } else if (this._resolvedEndpoint) {
-      wsUrl = this._resolvedEndpoint.wsUrl;
-      isDirect = true;
-    } else {
-      wsUrl = `${this._relayUrl}/ws/input`;
-    }
+    const { wsUrl, isDirect } = this._deriveWsUrl();
 
     const ws = new this._WS(wsUrl);
     this._activeWs = ws;
+    this._shouldReconnect = true;
 
     return new Promise<Response>((resolve, reject) => {
-      let settled = false;
-      const timer = setTimeout(() => {
-        if (!settled) {
-          settled = true;
-          this._status = 'idle';
-          ws.close();
-          reject(new Error('Connection timed out'));
-        }
-      }, timeoutMs);
+      const state = {
+        settled: false,
+        timer: setTimeout(() => {
+          if (!state.settled) {
+            state.settled = true;
+            this._status = 'idle';
+            this._shouldReconnect = false;
+            ws.close();
+            reject(new Error('Connection timed out'));
+          }
+        }, timeoutMs),
+      };
 
       ws.onopen = () => {
         this._lastPingTime = Date.now();
@@ -459,239 +446,245 @@ export class RemoteAgent {
         ws.send(JSON.stringify(inputMessage));
       };
 
-      ws.onmessage = (evt: { data: unknown }) => {
-        if (settled) return;
-        const raw = typeof evt.data === 'string' ? evt.data : String(evt.data);
-        const data = JSON.parse(raw);
+      this._attachMessageHandlers(ws, inputId, isDirect, state, resolve, reject);
+    });
+  }
 
-        if (data?.type === 'PING') {
-          this._lastPingTime = Date.now();
-          ws.send(JSON.stringify({ type: 'PONG' }));
-          return;
+  /**
+   * Attach onmessage/onerror/onclose to a WebSocket.
+   * Shared by _streamInput (initial connection) and _reconnect.
+   */
+  private _attachMessageHandlers(
+    ws: WebSocketLike,
+    inputId: string,
+    isDirect: boolean,
+    state: { settled: boolean; timer: ReturnType<typeof setTimeout> },
+    resolve: (value: Response) => void,
+    reject: (reason?: unknown) => void,
+  ): void {
+    ws.onmessage = (evt: { data: unknown }) => {
+      if (state.settled) return;
+      const raw = typeof evt.data === 'string' ? evt.data : String(evt.data);
+      const data = JSON.parse(raw);
+
+      if (data?.type === 'PING') {
+        this._lastPingTime = Date.now();
+        ws.send(JSON.stringify({ type: 'PONG' }));
+        return;
+      }
+
+      if (data?.type === 'session_sync' && data.session) {
+        this._currentSession = data.session;
+      }
+
+      if (data?.type === 'RECONNECTED') {
+        console.log('[RemoteAgent] Reconnected to session:', data.session_id);
+      }
+
+      if (data?.type === 'SESSION_MERGED' && data.server_newer) {
+        console.log('[RemoteAgent] Server had newer session, merged');
+      }
+
+      if (data?.type === 'mode_changed' && data.mode) {
+        if (!this._currentSession) {
+          this._currentSession = { mode: data.mode };
+        } else {
+          this._currentSession.mode = data.mode;
         }
+      }
 
-        if (data?.type === 'session_sync' && data.session) {
+      if (data?.type === 'ulw_turns_reached') {
+        this._status = 'waiting';
+        if (this._currentSession) {
+          this._currentSession.ulw_turns_used = data.turns_used;
+        }
+        this._addChatItem({
+          type: 'ulw_turns_reached',
+          turns_used: data.turns_used as number,
+          max_turns: data.max_turns as number,
+        });
+      }
+
+      if (data?.type === 'llm_call' || data?.type === 'llm_result' ||
+          data?.type === 'tool_call' || data?.type === 'tool_result' ||
+          data?.type === 'thinking' || data?.type === 'assistant' ||
+          data?.type === 'intent' || data?.type === 'eval' || data?.type === 'compact' ||
+          data?.type === 'tool_blocked') {
+        this._handleStreamEvent(data);
+        if (data.session) {
+          this._currentSession = data.session;
+        }
+      }
+
+      if (data?.type === 'ask_user') {
+        this._status = 'waiting';
+        this._addChatItem({ type: 'ask_user', text: data.text || '', options: data.options || [], multi_select: data.multi_select || false });
+      }
+
+      if (data?.type === 'approval_needed') {
+        this._status = 'waiting';
+        this._addChatItem({
+          type: 'approval_needed',
+          tool: data.tool as string,
+          arguments: data.arguments as Record<string, unknown>,
+          ...(data.description && { description: data.description as string }),
+          ...(data.batch_remaining && { batch_remaining: data.batch_remaining as Array<{ tool: string; arguments: string }> }),
+        });
+      }
+
+      if (data?.type === 'plan_review') {
+        this._status = 'waiting';
+        this._addChatItem({
+          type: 'plan_review',
+          plan_content: data.plan_content as string,
+        });
+      }
+
+      if (data?.type === 'ONBOARD_REQUIRED') {
+        this._status = 'waiting';
+        this._pendingPrompt = data.prompt || '';
+        this._pendingInputId = inputId;
+        this._pendingSessionId = this._currentSession?.session_id || null;
+        this._addChatItem({
+          type: 'onboard_required',
+          methods: (data.methods || []) as string[],
+          paymentAmount: data.payment_amount as number | undefined,
+        });
+      }
+
+      if (data?.type === 'ONBOARD_SUCCESS') {
+        this._addChatItem({
+          type: 'onboard_success',
+          level: data.level as string,
+          message: data.message as string,
+        });
+
+        if (this._pendingPrompt && this._activeWs) {
+          this._status = 'working';
+          const retryPrompt = this._pendingPrompt;
+          const retryInputId = this._pendingInputId || generateUUID();
+          this._pendingPrompt = null;
+          this._pendingInputId = null;
+
+          const retryPayload: Record<string, unknown> = {
+            prompt: retryPrompt,
+            timestamp: Math.floor(Date.now() / 1000),
+          };
+          if (!isDirect) retryPayload.to = this.address;
+
+          const retrySigned = this._signPayload(retryPayload);
+
+          const retryMessage: Record<string, unknown> = {
+            type: 'INPUT',
+            input_id: retryInputId,
+            prompt: retryPrompt,
+            ...retrySigned,
+          };
+          if (!isDirect) retryMessage.to = this.address;
+          if (this._currentSession) {
+            retryMessage.session = { ...this._currentSession, session_id: this._pendingSessionId };
+          } else {
+            retryMessage.session = { session_id: this._pendingSessionId };
+          }
+
+          this._activeWs.send(JSON.stringify(retryMessage));
+          this._pendingSessionId = null;
+        }
+      }
+
+      const isOutputForUs = isDirect
+        ? data?.type === 'OUTPUT'
+        : data?.type === 'OUTPUT' && data?.input_id === inputId;
+      if (isOutputForUs) {
+        state.settled = true;
+        clearTimeout(state.timer);
+        this._stopHealthCheck();
+        this._removeOptimisticThinking();
+        this._status = 'idle';
+        this._shouldReconnect = false;
+        this._reconnectAttempts = 0;
+
+        if (data.session) {
           this._currentSession = data.session;
         }
 
-        // Handle reconnection acknowledgment
-        if (data?.type === 'RECONNECTED') {
-          console.log('[RemoteAgent] Reconnected to session:', data.session_id);
+        if (data.chat_items && Array.isArray(data.chat_items)) {
+          const userItems = this._chatItems.filter(item => item.type === 'user');
+          const serverNonUserItems = (data.chat_items as ChatItem[]).filter(item => item.type !== 'user');
+          this._chatItems = [...userItems, ...serverNonUserItems];
         }
 
-        // Handle session merge notification
-        if (data?.type === 'SESSION_MERGED' && data.server_newer) {
-          console.log('[RemoteAgent] Server had newer session, merged');
+        if (data.server_newer) {
+          console.log('[RemoteAgent] Session was merged with newer server state');
         }
 
-        if (data?.type === 'mode_changed' && data.mode) {
-          if (!this._currentSession) {
-            this._currentSession = { mode: data.mode };
-          } else {
-            this._currentSession.mode = data.mode;
+        const result = data.result || '';
+        if (result) {
+          const lastAgent = this._chatItems.filter((e): e is ChatItem & { type: 'agent' } => e.type === 'agent').pop();
+          if (!lastAgent || lastAgent.content !== result) {
+            this._addChatItem({ type: 'agent', content: result });
           }
         }
 
-        if (data?.type === 'ulw_turns_reached') {
-          this._status = 'waiting';
-          if (this._currentSession) {
-            this._currentSession.ulw_turns_used = data.turns_used;
-          }
-          this._addChatItem({
-            type: 'ulw_turns_reached',
-            turns_used: data.turns_used as number,
-            max_turns: data.max_turns as number,
-          });
-        }
+        this._activeWs = null;
+        ws.close();
+        resolve({ text: result, done: true });
+      }
 
-        if (data?.type === 'llm_call' || data?.type === 'llm_result' ||
-            data?.type === 'tool_call' || data?.type === 'tool_result' ||
-            data?.type === 'thinking' || data?.type === 'assistant' ||
-            data?.type === 'intent' || data?.type === 'eval' || data?.type === 'compact' ||
-            data?.type === 'tool_blocked') {
-          this._handleStreamEvent(data);
-          if (data.session) {
-            this._currentSession = data.session;
-          }
-        }
-
-        if (data?.type === 'ask_user') {
-          this._status = 'waiting';
-          this._addChatItem({ type: 'ask_user', text: data.text || '', options: data.options || [], multi_select: data.multi_select || false });
-        }
-
-        if (data?.type === 'approval_needed') {
-          this._status = 'waiting';
-          this._addChatItem({
-            type: 'approval_needed',
-            tool: data.tool as string,
-            arguments: data.arguments as Record<string, unknown>,
-            ...(data.description && { description: data.description as string }),
-            ...(data.batch_remaining && { batch_remaining: data.batch_remaining as Array<{ tool: string; arguments: string }> }),
-          });
-        }
-
-        if (data?.type === 'ONBOARD_REQUIRED') {
-          this._status = 'waiting';
-          this._pendingPrompt = prompt;
-          this._pendingInputId = inputId;
-          this._pendingSessionId = sessionId;
-          this._addChatItem({
-            type: 'onboard_required',
-            methods: (data.methods || []) as string[],
-            paymentAmount: data.payment_amount as number | undefined,
-          });
-        }
-
-        if (data?.type === 'ONBOARD_SUCCESS') {
-          this._addChatItem({
-            type: 'onboard_success',
-            level: data.level as string,
-            message: data.message as string,
-          });
-
-          if (this._pendingPrompt && this._activeWs) {
-            this._status = 'working';
-            const retryPrompt = this._pendingPrompt;
-            const retryInputId = this._pendingInputId || generateUUID();
-            this._pendingPrompt = null;
-            this._pendingInputId = null;
-
-            const retryPayload: Record<string, unknown> = {
-              prompt: retryPrompt,
-              timestamp: Math.floor(Date.now() / 1000),
-            };
-            if (!isDirect) retryPayload.to = this.address;
-
-            const retrySigned = this._signPayload(retryPayload);
-
-            const retryMessage: Record<string, unknown> = {
-              type: 'INPUT',
-              input_id: retryInputId,
-              prompt: retryPrompt,
-              ...retrySigned,
-            };
-            if (!isDirect) retryMessage.to = this.address;
-            if (this._currentSession) {
-              retryMessage.session = { ...this._currentSession, session_id: this._pendingSessionId };
-            } else {
-              retryMessage.session = { session_id: this._pendingSessionId };
-            }
-
-            this._activeWs.send(JSON.stringify(retryMessage));
-            this._pendingSessionId = null;
-          }
-        }
-
-        const isOutputForUs = isDirect
-          ? data?.type === 'OUTPUT'
-          : data?.type === 'OUTPUT' && data?.input_id === inputId;
-        if (isOutputForUs) {
-          settled = true;
-          clearTimeout(timer);
-          this._stopHealthCheck();
-          this._removeOptimisticThinking();
-          this._status = 'idle';
-
-          if (data.session) {
-            this._currentSession = data.session;
-          }
-
-          // If server sent chat_items (server-side conversion), use them
-          if (data.chat_items && Array.isArray(data.chat_items)) {
-            // Server provided UI-ready ChatItems - use directly
-            // Keep user messages we added optimistically, replace rest with server items
-            const userItems = this._chatItems.filter(item => item.type === 'user');
-            const serverNonUserItems = (data.chat_items as ChatItem[]).filter(item => item.type !== 'user');
-            this._chatItems = [...userItems, ...serverNonUserItems];
-          }
-
-          // Log if server had newer session (merge happened)
-          if (data.server_newer) {
-            console.log('[RemoteAgent] Session was merged with newer server state');
-          }
-
-          const result = data.result || '';
-          if (result) {
-            const lastAgent = this._chatItems.filter((e): e is ChatItem & { type: 'agent' } => e.type === 'agent').pop();
-            if (!lastAgent || lastAgent.content !== result) {
-              this._addChatItem({ type: 'agent', content: result });
-            }
-          }
-
-          this._activeWs = null;
-          ws.close();
-          resolve({ text: result, done: true });
-        }
-
-        if (data?.type === 'ERROR') {
-          settled = true;
-          clearTimeout(timer);
-          this._stopHealthCheck();
-          this._status = 'idle';
-          this._activeWs = null;
-          ws.close();
-          reject(new Error(`Agent error: ${String(data.message || data.error || 'Unknown error')}`));
-        }
-      };
-
-      ws.onerror = async (err: unknown) => {
-        if (settled) return;
-        settled = true;
+      if (data?.type === 'ERROR') {
+        state.settled = true;
+        clearTimeout(state.timer);
         this._stopHealthCheck();
         this._status = 'idle';
-        clearTimeout(timer);
+        this._shouldReconnect = false;
+        this._activeWs = null;
         ws.close();
+        reject(new Error(`Agent error: ${String(data.message || data.error || 'Unknown error')}`));
+      }
+    };
 
-        // Clear stale direct endpoint so next call re-resolves
+    ws.onerror = async (err: unknown) => {
+      if (state.settled) return;
+      this._stopHealthCheck();
+      clearTimeout(state.timer);
+      ws.close();
+
+      if (isDirect && !this._directUrl) {
+        this._resolvedEndpoint = undefined;
+        this._endpointResolutionAttempted = false;
+      }
+
+      if (this._shouldReconnect && this._reconnectAttempts < this._maxReconnectAttempts) {
+        this._attemptReconnect(resolve, reject);
+      } else {
+        state.settled = true;
+        this._status = 'idle';
+        this._shouldReconnect = false;
+        reject(new Error(`WebSocket error: ${String(err)}`));
+      }
+    };
+
+    ws.onclose = async () => {
+      this._activeWs = null;
+      this._stopHealthCheck();
+      if (!state.settled) {
+        clearTimeout(state.timer);
+
         if (isDirect && !this._directUrl) {
           this._resolvedEndpoint = undefined;
           this._endpointResolutionAttempted = false;
         }
 
-        reject(new Error(`WebSocket error: ${String(err)}`));
-      };
-
-      ws.onclose = async () => {
-        this._activeWs = null;
-        this._stopHealthCheck();
-        if (!settled) {
-          settled = true;
+        if (this._shouldReconnect && this._reconnectAttempts < this._maxReconnectAttempts) {
+          this._attemptReconnect(resolve, reject);
+        } else {
+          state.settled = true;
           this._status = 'idle';
-          clearTimeout(timer);
-
-          // Clear stale direct endpoint so next call re-resolves
-          if (isDirect && !this._directUrl) {
-            this._resolvedEndpoint = undefined;
-            this._endpointResolutionAttempted = false;
-          }
-
+          this._shouldReconnect = false;
           reject(new Error('Connection closed before response'));
         }
-      };
-    });
-  }
-
-  // TODO: Refactor to share message handlers between _streamInput and _reconnectWithParams
-  private _setupWebSocketHandlers(
-    _ws: WebSocketLike,
-    _params: {
-      prompt: string;
-      timeoutMs: number;
-      images?: string[];
-      inputId: string;
-      sessionId: string;
-      wsUrl: string;
-      isDirect: boolean;
-    },
-    _settled: boolean,
-    _timer: ReturnType<typeof setTimeout>,
-    _resolve: (value: Response) => void,
-    _reject: (reason?: unknown) => void
-  ): void {
-    // For now, this is a placeholder. The handlers are duplicated in _streamInput.
-    // Full implementation would refactor to share the ws.onmessage, ws.onerror, ws.onclose handlers.
-    console.warn('[RemoteAgent] _setupWebSocketHandlers called but handlers are inline in _streamInput');
+      }
+    };
   }
 
   // ==========================================================================

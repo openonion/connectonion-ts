@@ -15,7 +15,7 @@ export interface Response {
 // Chat Item Types (data for rendering chat UI)
 // ============================================================================
 
-export type ChatItemType = 'user' | 'agent' | 'thinking' | 'tool_call' | 'ask_user' | 'approval_needed' | 'onboard_required' | 'onboard_success' | 'intent' | 'eval' | 'compact' | 'tool_blocked' | 'ulw_turns_reached';
+export type ChatItemType = 'user' | 'agent' | 'thinking' | 'tool_call' | 'ask_user' | 'approval_needed' | 'onboard_required' | 'onboard_success' | 'intent' | 'eval' | 'compact' | 'tool_blocked' | 'ulw_turns_reached' | 'plan_review';
 
 export type ChatItem =
   | { id: string; type: 'user'; content: string; images?: string[] }
@@ -30,7 +30,8 @@ export type ChatItem =
   | { id: string; type: 'eval'; status: 'evaluating' | 'done'; passed?: boolean; summary?: string; expected?: string; eval_path?: string }
   | { id: string; type: 'compact'; status: 'compacting' | 'done' | 'error'; context_before?: number; context_after?: number; context_percent?: number; message?: string; error?: string }
   | { id: string; type: 'tool_blocked'; tool: string; reason: string; message: string; command?: string }
-  | { id: string; type: 'ulw_turns_reached'; turns_used: number; max_turns: number };
+  | { id: string; type: 'ulw_turns_reached'; turns_used: number; max_turns: number }
+  | { id: string; type: 'plan_review'; plan_content: string };
 
 // ============================================================================
 // WebSocket Types (internal, exported for cross-file use)

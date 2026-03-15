@@ -61,10 +61,17 @@ export interface ResolvedEndpoint {
 // Agent Info
 // ============================================================================
 
+export interface SkillInfo {
+  name: string;
+  description: string;
+  location: string;
+}
+
 export interface AgentInfo {
   address: string;
   name?: string;
   tools?: string[];
+  skills?: SkillInfo[];
   trust?: string;
   version?: string;
   online: boolean;

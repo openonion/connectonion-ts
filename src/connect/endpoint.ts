@@ -132,10 +132,11 @@ export async function fetchAgentInfo(
 
     const info = await infoRes.json() as {
       name?: string; address?: string; tools?: string[];
+      skills?: Array<{name: string; description: string; location: string}>;
       trust?: string; version?: string;
     };
     if (info.address === agentAddress) {
-      return { address: agentAddress, name: info.name, tools: info.tools, trust: info.trust, version: info.version, online: true };
+      return { address: agentAddress, name: info.name, tools: info.tools, skills: info.skills, trust: info.trust, version: info.version, online: true };
     }
   }
 

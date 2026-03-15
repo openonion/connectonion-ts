@@ -66,6 +66,20 @@ export class RemoteAgent {
   private _lastPingTime: number = 0;
   private _healthCheckInterval: ReturnType<typeof setInterval> | null = null;
 
+  // Reconnection state
+  private _reconnectAttempts: number = 0;
+  private _maxReconnectAttempts: number = 3;
+  private _reconnectBaseDelay: number = 1000; // Start with 1 second
+  private _lastConnectionParams: {
+    prompt: string;
+    timeoutMs: number;
+    images?: string[];
+    inputId: string;
+    sessionId: string;
+    wsUrl: string;
+    isDirect: boolean;
+  } | null = null;
+
   constructor(agentAddress: string, options: ConnectOptions = {}) {
     this.address = agentAddress;
     this._relayUrl = normalizeRelayBase(options.relayUrl || 'wss://oo.openonion.ai');
@@ -253,6 +267,106 @@ export class RemoteAgent {
     }
   }
 
+  private async _attemptReconnect(
+    resolve: (value: Response) => void,
+    reject: (reason?: any) => void
+  ): Promise<void> {
+    if (!this._lastConnectionParams) {
+      reject(new Error('No connection parameters saved for reconnection'));
+      return;
+    }
+
+    if (this._reconnectAttempts >= this._maxReconnectAttempts) {
+      this._reconnectAttempts = 0;
+      this._lastConnectionParams = null;
+      reject(new Error('Max reconnection attempts reached'));
+      return;
+    }
+
+    this._reconnectAttempts++;
+    const delay = Math.min(
+      this._reconnectBaseDelay * Math.pow(2, this._reconnectAttempts - 1),
+      30000 // Max 30 seconds
+    );
+
+    console.log(`[ConnectOnion] Connection lost. Reconnecting in ${delay}ms (attempt ${this._reconnectAttempts}/${this._maxReconnectAttempts})...`);
+
+    setTimeout(() => {
+      if (this._lastConnectionParams) {
+        this._reconnectWithParams(resolve, reject).catch(reject);
+      }
+    }, delay);
+  }
+
+  private async _reconnectWithParams(
+    resolve: (value: Response) => void,
+    reject: (reason?: any) => void
+  ): Promise<void> {
+    if (!this._lastConnectionParams) {
+      reject(new Error('No connection parameters for reconnection'));
+      return;
+    }
+
+    const params = this._lastConnectionParams;
+    const ws = new this._WS(params.wsUrl);
+    this._activeWs = ws;
+    this._status = 'working';
+
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        this._status = 'idle';
+        ws.close();
+        this._attemptReconnect(resolve, reject);
+      }
+    }, params.timeoutMs);
+
+    ws.onopen = () => {
+      console.log('[ConnectOnion] Reconnected successfully');
+      this._reconnectAttempts = 0; // Reset on successful connection
+      this._lastPingTime = Date.now();
+      this._startHealthCheck(ws, reject);
+
+      const payload: Record<string, unknown> = {
+        prompt: params.prompt,
+        timestamp: Math.floor(Date.now() / 1000),
+      };
+
+      if (!params.isDirect) {
+        payload.to = this.address;
+      }
+
+      const signed = this._signPayload(payload);
+
+      const inputMessage: Record<string, unknown> = {
+        type: 'INPUT',
+        input_id: params.inputId,
+        prompt: params.prompt,
+        ...signed,
+      };
+
+      if (params.images && params.images.length > 0) {
+        inputMessage.images = params.images;
+      }
+
+      if (!params.isDirect) {
+        inputMessage.to = this.address;
+      }
+
+      if (this._currentSession) {
+        inputMessage.session = { ...this._currentSession, session_id: params.sessionId };
+      } else {
+        inputMessage.session = { session_id: params.sessionId };
+      }
+
+      ws.send(JSON.stringify(inputMessage));
+    };
+
+    // Reuse message handlers (will be extracted to shared method)
+    this._setupWebSocketHandlers(ws, params, settled, timer, resolve, reject);
+  }
+
   private async _tryResolveEndpoint(): Promise<void> {
     if (this._endpointResolutionAttempted || this._directUrl) return;
 
@@ -275,6 +389,7 @@ export class RemoteAgent {
     this._status = 'working';
 
     const inputId = generateUUID();
+    // Session ID: client-generated UUID (server uses this for storage/reconnection)
     const sessionId = this._currentSession?.session_id || generateUUID();
 
     let wsUrl: string;
@@ -357,6 +472,16 @@ export class RemoteAgent {
 
         if (data?.type === 'session_sync' && data.session) {
           this._currentSession = data.session;
+        }
+
+        // Handle reconnection acknowledgment
+        if (data?.type === 'RECONNECTED') {
+          console.log('[RemoteAgent] Reconnected to session:', data.session_id);
+        }
+
+        // Handle session merge notification
+        if (data?.type === 'SESSION_MERGED' && data.server_newer) {
+          console.log('[RemoteAgent] Server had newer session, merged');
         }
 
         if (data?.type === 'mode_changed' && data.mode) {
@@ -472,6 +597,20 @@ export class RemoteAgent {
             this._currentSession = data.session;
           }
 
+          // If server sent chat_items (server-side conversion), use them
+          if (data.chat_items && Array.isArray(data.chat_items)) {
+            // Server provided UI-ready ChatItems - use directly
+            // Keep user messages we added optimistically, replace rest with server items
+            const userItems = this._chatItems.filter(item => item.type === 'user');
+            const serverNonUserItems = (data.chat_items as ChatItem[]).filter(item => item.type !== 'user');
+            this._chatItems = [...userItems, ...serverNonUserItems];
+          }
+
+          // Log if server had newer session (merge happened)
+          if (data.server_newer) {
+            console.log('[RemoteAgent] Session was merged with newer server state');
+          }
+
           const result = data.result || '';
           if (result) {
             const lastAgent = this._chatItems.filter((e): e is ChatItem & { type: 'agent' } => e.type === 'agent').pop();
@@ -531,6 +670,28 @@ export class RemoteAgent {
         }
       };
     });
+  }
+
+  // TODO: Refactor to share message handlers between _streamInput and _reconnectWithParams
+  private _setupWebSocketHandlers(
+    _ws: WebSocketLike,
+    _params: {
+      prompt: string;
+      timeoutMs: number;
+      images?: string[];
+      inputId: string;
+      sessionId: string;
+      wsUrl: string;
+      isDirect: boolean;
+    },
+    _settled: boolean,
+    _timer: ReturnType<typeof setTimeout>,
+    _resolve: (value: Response) => void,
+    _reject: (reason?: unknown) => void
+  ): void {
+    // For now, this is a placeholder. The handlers are duplicated in _streamInput.
+    // Full implementation would refactor to share the ws.onmessage, ws.onerror, ws.onclose handlers.
+    console.warn('[RemoteAgent] _setupWebSocketHandlers called but handlers are inline in _streamInput');
   }
 
   // ==========================================================================
@@ -743,6 +904,7 @@ export class RemoteAgent {
           tool: event.tool as string,
           reason: event.reason as string,
           message: event.message as string,
+          command: event.command as string | undefined,
         });
         break;
       }

@@ -29,7 +29,7 @@ export type ChatItem =
   | { id: string; type: 'intent'; status: 'analyzing' | 'understood'; ack?: string; is_build?: boolean }
   | { id: string; type: 'eval'; status: 'evaluating' | 'done'; passed?: boolean; summary?: string; expected?: string; eval_path?: string }
   | { id: string; type: 'compact'; status: 'compacting' | 'done' | 'error'; context_before?: number; context_after?: number; context_percent?: number; message?: string; error?: string }
-  | { id: string; type: 'tool_blocked'; tool: string; reason: string; message: string }
+  | { id: string; type: 'tool_blocked'; tool: string; reason: string; message: string; command?: string }
   | { id: string; type: 'ulw_turns_reached'; turns_used: number; max_turns: number };
 
 // ============================================================================

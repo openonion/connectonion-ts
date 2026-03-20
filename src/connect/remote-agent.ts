@@ -40,6 +40,7 @@ export class RemoteAgent {
   _maxReconnectAttempts = 3;
   _reconnectBaseDelay = 1000;
   _shouldReconnect = false;
+  _connectedCallback: ((data: Record<string, unknown>) => void) | null = null;
 
   constructor(agentAddress: string, options: ConnectOptions = {}) {
     this.address = agentAddress;
@@ -104,11 +105,52 @@ export class RemoteAgent {
         this._connectionState = 'connected';
         this._lastPingTime = Date.now();
         this._startPingMonitor(ws, reject);
-        // Send INPUT with existing session to trigger server reconnect path
-        this._sendInput(ws, inputId, this._pendingPrompt || '', sid, isDirect);
+        // CONNECT with session_id to resume — no INPUT needed
+        this._connectedCallback = null;
+        this._sendConnect(ws, sid, isDirect);
       };
 
       attachWsHandlers(this, ws, inputId, isDirect, state, resolve, reject);
+    });
+  }
+
+  /** Attach to an existing session without sending a prompt. For auto-reconnect on page refresh. */
+  async attach(sessionId: string): Promise<Response> {
+    this._keys = ensureKeys(this._keys);
+    await this._resolveEndpointOnce();
+
+    if (!this._currentSession) this._currentSession = { session_id: sessionId };
+    this._status = 'working';
+    const { wsUrl, isDirect } = this._resolveWsUrl();
+
+    const ws = new this._WS(wsUrl);
+    this._activeWs = ws;
+    this._shouldReconnect = true;
+
+    return new Promise<Response>((resolve, reject) => {
+      const state = {
+        settled: false,
+        timer: setTimeout(() => {
+          if (!state.settled) {
+            state.settled = true;
+            this._status = 'idle';
+            this._shouldReconnect = false;
+            this._connectionState = 'disconnected';
+            ws.close();
+            reject(new Error('Attach timed out'));
+          }
+        }, 60000),
+      };
+
+      ws.onopen = () => {
+        this._connectionState = 'connected';
+        this._lastPingTime = Date.now();
+        this._startPingMonitor(ws, reject);
+        this._connectedCallback = null;
+        this._sendConnect(ws, sessionId, isDirect);
+      };
+
+      attachWsHandlers(this, ws, generateUUID(), isDirect, state, resolve, reject);
     });
   }
 
@@ -225,17 +267,28 @@ export class RemoteAgent {
     setTimeout(() => this._reconnect(resolve, reject), delay);
   }
 
-  _sendInput(ws: WebSocketLike, inputId: string, prompt: string, sessionId: string, isDirect: boolean, images?: string[]): void {
-    const payload: Record<string, unknown> = { prompt, timestamp: Math.floor(Date.now() / 1000) };
+  _sendConnect(ws: WebSocketLike, sessionId: string | null, isDirect: boolean): void {
+    const payload: Record<string, unknown> = { timestamp: Math.floor(Date.now() / 1000) };
     payload.to = this.address;
     const signed = signPayload(this._keys, payload);
-    const msg: Record<string, unknown> = { type: 'INPUT', input_id: inputId, prompt, ...signed };
+    const msg: Record<string, unknown> = { type: 'CONNECT', ...signed };
+    if (!isDirect) msg.to = this.address;
+    if (sessionId) msg.session_id = sessionId;
+    if (this._currentSession) {
+      msg.session = { ...this._currentSession, session_id: sessionId };
+    }
+    console.log(`[ConnectOnion] Sending CONNECT via ${isDirect ? 'direct' : 'relay'}, from: ${(signed as { from?: string }).from?.slice(0, 12)}...`);
+    ws.send(JSON.stringify(msg));
+  }
+
+  _sendInput(ws: WebSocketLike, inputId: string, prompt: string, sessionId: string, isDirect: boolean, images?: string[]): void {
+    const msg: Record<string, unknown> = { type: 'INPUT', input_id: inputId, prompt };
     if (images?.length) msg.images = images;
     if (!isDirect) msg.to = this.address;
     msg.session = this._currentSession
       ? { ...this._currentSession, session_id: sessionId }
       : { session_id: sessionId };
-    console.log(`[ConnectOnion] Sending INPUT via ${isDirect ? 'direct' : 'relay'}, from: ${(signed as { from?: string }).from?.slice(0, 12)}...`);
+    console.log(`[ConnectOnion] Sending INPUT`);
     ws.send(JSON.stringify(msg));
   }
 
@@ -306,7 +359,11 @@ export class RemoteAgent {
         this._connectionState = 'connected';
         this._lastPingTime = Date.now();
         this._startPingMonitor(ws, reject);
-        this._sendInput(ws, inputId, prompt, sessionId, isDirect, images);
+        // Two-step: CONNECT first, then INPUT after CONNECTED response
+        this._connectedCallback = () => {
+          this._sendInput(ws, inputId, prompt, sessionId, isDirect, images);
+        };
+        this._sendConnect(ws, sessionId, isDirect);
       };
 
       attachWsHandlers(this, ws, inputId, isDirect, state, resolve, reject);
@@ -339,7 +396,9 @@ export class RemoteAgent {
       this._connectionState = 'connected';
       this._lastPingTime = Date.now();
       this._startPingMonitor(ws, reject);
-      this._sendInput(ws, generateUUID(), this._pendingPrompt || '', sessionId, isDirect);
+      // Reconnect: CONNECT with session_id, no INPUT needed
+      this._connectedCallback = null;
+      this._sendConnect(ws, sessionId, isDirect);
     };
 
     attachWsHandlers(this, ws, '', isDirect, state, resolve, reject);

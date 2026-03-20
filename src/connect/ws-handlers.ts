@@ -34,6 +34,17 @@ export function attachWsHandlers(
       agent._currentSession = data.session;
     }
 
+    if (data?.type === 'CONNECTED') {
+      console.log('[RemoteAgent] Connected, session:', data.session_id, 'status:', data.status);
+      if (agent._connectedCallback) {
+        const cb = agent._connectedCallback;
+        agent._connectedCallback = null;
+        cb(data);
+      }
+      agent._onMessage?.();
+      return;
+    }
+
     if (data?.type === 'RECONNECTED') {
       console.log('[RemoteAgent] Reconnected to session:', data.session_id);
     }

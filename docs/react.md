@@ -13,10 +13,10 @@ React is a peer dependency - you need React 17+ in your project.
 ## Quick Start
 
 ```tsx
-import { useAgent } from 'connectonion/react';
+import { useAgentForHuman } from 'connectonion/react';
 
 function ChatBot({ sessionId }: { sessionId: string }) {
-  const { ui, status, input, isProcessing } = useAgent('0x123abc', { sessionId });
+  const { ui, status, input, isProcessing } = useAgentForHuman('0x123abc', { sessionId });
 
   const handleSubmit = async (text: string) => {
     await input(text);
@@ -39,7 +39,7 @@ function ChatBot({ sessionId }: { sessionId: string }) {
 }
 ```
 
-## The `useAgent` Hook
+## The `useAgentForHuman` Hook
 
 ```tsx
 const {
@@ -52,7 +52,7 @@ const {
   error,          // Error | null - last error
   respond,        // (answer: string | string[]) => void - answer ask_user
   respondToApproval, // (approved: boolean, ...) => void
-} = useAgent(address, options);
+} = useAgentForHuman(address, options);
 ```
 
 ### Parameters
@@ -60,12 +60,12 @@ const {
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `address` | `string` | Agent's public address (0x...) |
-| `options` | `UseAgentOptions` | Options with required `sessionId` |
+| `options` | `UseAgentForHumanOptions` | Options with required `sessionId` |
 
 ### Options
 
 ```tsx
-interface UseAgentOptions extends ConnectOptions {
+interface UseAgentForHumanOptions extends ConnectOptions {
   sessionId: string;         // Required - unique ID for this conversation
 }
 
@@ -167,7 +167,7 @@ const handleSubmit = async (text: string) => {
 
 ## Session Persistence
 
-The `useAgent` hook automatically persists session state to `localStorage` via Zustand. This means:
+The `useAgentForHuman` hook automatically persists session state to `localStorage` via Zustand. This means:
 
 - **Survives browser refresh**: If the user refreshes mid-conversation, the session is restored
 - **Client is source of truth**: Server sends session state with every streaming event, the hook saves it locally
@@ -187,7 +187,7 @@ The `useAgent` hook automatically persists session state to `localStorage` via Z
 const sessionId = crypto.randomUUID();
 
 // Pass it to the hook - session auto-persists
-const { input, reset } = useAgent('0x123abc', { sessionId });
+const { input, reset } = useAgentForHuman('0x123abc', { sessionId });
 
 // reset() clears the Zustand store for this sessionId
 // To start a NEW conversation, navigate to a new sessionId
@@ -208,17 +208,17 @@ const { input, reset } = useAgent('0x123abc', { sessionId });
 The base `RemoteAgent` (from `connect()`) keeps session **in memory only**. Only the React hook adds localStorage persistence. This separation means:
 
 - **Node.js / non-React**: Session lives in memory, lost on process restart
-- **React (useAgent)**: Session auto-persists to localStorage
+- **React (useAgentForHuman)**: Session auto-persists to localStorage
 
 ## Examples
 
 ### Basic Chat Interface
 
 ```tsx
-import { useAgent } from 'connectonion/react';
+import { useAgentForHuman } from 'connectonion/react';
 
 function Chat({ sessionId }: { sessionId: string }) {
-  const { ui, input, isProcessing, reset } = useAgent('0x123abc', { sessionId });
+  const { ui, input, isProcessing, reset } = useAgentForHuman('0x123abc', { sessionId });
   const [text, setText] = useState('');
 
   const handleSubmit = async (e: FormEvent) => {
@@ -259,14 +259,14 @@ function Chat({ sessionId }: { sessionId: string }) {
 ### With Signing Keys (Strict Trust)
 
 ```tsx
-import { useAgent } from 'connectonion/react';
+import { useAgentForHuman } from 'connectonion/react';
 import { address } from 'connectonion';
 
 function SecureAgent({ sessionId }: { sessionId: string }) {
   // Generate or load keys
   const [keys] = useState(() => address.generate());
 
-  const { input } = useAgent('0x123abc', { sessionId, keys });
+  const { input } = useAgentForHuman('0x123abc', { sessionId, keys });
 
   // Your public address for the agent to verify
   console.log('My address:', keys.address);
@@ -310,8 +310,8 @@ import type {
   ChatItemType,
   AgentStatus,
   ConnectOptions,
-  UseAgentOptions,
-  UseAgentReturn,
+  UseAgentForHumanOptions,
+  UseAgentForHumanReturn,
 } from 'connectonion/react';
 ```
 
@@ -322,7 +322,7 @@ The hook is safe for SSR - it initializes with empty state and only connects on 
 ```tsx
 // Works in Next.js, Remix, etc.
 function Page() {
-  const { ui, input } = useAgent('0x123abc', { sessionId: 'my-session' });
+  const { ui, input } = useAgentForHuman('0x123abc', { sessionId: 'my-session' });
 
   // ui is [] on server, populated on client
   return <div>{ui.map(...)}</div>;
@@ -331,7 +331,7 @@ function Page() {
 
 ## Comparison with Low-Level API
 
-| Feature | `useAgent()` | `connect()` |
+| Feature | `useAgentForHuman()` | `connect()` |
 |---------|--------------|-------------|
 | Reactive updates | Automatic | Manual polling |
 | State management | Built-in (Zustand) | You manage |
@@ -339,7 +339,7 @@ function Page() {
 | SSR safe | Yes | Yes |
 | Framework | React only | Any JS |
 
-Use `useAgent()` for React apps. Use `connect()` for Node.js, Vue, Svelte, or custom implementations.
+Use `useAgentForHuman()` for React apps. Use `connect()` for Node.js, Vue, Svelte, or custom implementations.
 
 ## See Also
 

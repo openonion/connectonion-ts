@@ -37,7 +37,7 @@ agent.currentSession  // Synced from server on each event (in-memory only)
 agent.ui              // Chat items for rendering
 ```
 
-**Note:** The base `RemoteAgent` does not persist sessions. For localStorage persistence, use the React `useAgent` hook (see [react.md](./react.md)).
+**Note:** The base `RemoteAgent` does not persist sessions. For localStorage persistence, use the React `useAgentForHuman` hook (see [react.md](./react.md)).
 
 ## UI Rendering
 
@@ -77,13 +77,13 @@ Server: tool_result {id: '3', result: '...'}      → UI: {id: '3', status: 'don
 
 ## React Integration
 
-For reactive UI updates in React, use the `useAgent` hook:
+For reactive UI updates in React, use the `useAgentForHuman` hook:
 
 ```tsx
-import { useAgent } from 'connectonion/react';
+import { useAgentForHuman } from 'connectonion/react';
 
 function ChatUI({ sessionId }: { sessionId: string }) {
-  const { ui, status, input, isProcessing } = useAgent('0x...', { sessionId });
+  const { ui, status, input, isProcessing } = useAgentForHuman('0x...', { sessionId });
 
   const handleSend = async (text: string) => {
     const response = await input(text);
@@ -123,7 +123,7 @@ const {
   error,          // Error | null
   respond,        // (answer: string | string[]) => void - answer ask_user
   respondToApproval, // (approved: boolean, ...) => void
-} = useAgent('0x...', { sessionId });
+} = useAgentForHuman('0x...', { sessionId });
 ```
 
 Session auto-persists to localStorage by `sessionId`. See [react.md](./react.md) for details.
@@ -235,9 +235,9 @@ agent.status  // 'idle' | 'working' | 'waiting'
 
 ```tsx
 // React (reactive)
-import { useAgent } from 'connectonion/react';
+import { useAgentForHuman } from 'connectonion/react';
 
-const { ui, status, input, isProcessing } = useAgent('0x...', { sessionId });
+const { ui, status, input, isProcessing } = useAgentForHuman('0x...', { sessionId });
 // ui and status auto-update, triggering re-renders
 // Session auto-persists to localStorage
 ```

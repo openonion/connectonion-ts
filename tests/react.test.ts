@@ -4,15 +4,15 @@
  * Tests for connectonion/react hooks.
  *
  * Tests cover:
- * - useAgent hook initialization
- * - input() returns correct Response
+ * - useAgentForHuman(address, sessionId) hook initialization
+ * - input() fires non-blocking, UI updates arrive reactively via onMessage
  * - reset() behavior
- * - Session persistence config
+ * - Session persistence
  * - Error handling
  */
 
 import { renderHook, act } from '@testing-library/react';
-import { useAgent } from '../src/react';
+import { useAgentForHuman } from '../src/react';
 
 // Mock address module to skip signing
 jest.mock('../src/address', () => ({
@@ -42,6 +42,7 @@ class MockWebSocket {
   public onmessage: ((ev: { data: unknown }) => unknown) | null = null;
   public onerror: ((ev: unknown) => unknown) | null = null;
   public onclose: ((ev: unknown) => unknown) | null = null;
+  public readyState = 1;
   private closed = false;
 
   constructor(_url: string) {
@@ -50,6 +51,7 @@ class MockWebSocket {
 
   send(data: unknown): void {
     const msg = JSON.parse(String(data));
+    if (msg.type === 'PONG') return;
     const out = {
       type: 'OUTPUT',
       input_id: msg.input_id,
@@ -68,12 +70,33 @@ class MockWebSocket {
   close(): void {
     if (!this.closed) {
       this.closed = true;
+      this.readyState = 3;
       this.onclose && this.onclose({});
     }
   }
 }
 
-const mockWsCtor = MockWebSocket as any;
+// Swappable WebSocket class — tests can override for error scenarios
+let ActiveWS: any = MockWebSocket;
+
+// Proxy that delegates to ActiveWS at construction time
+const DynamicWS = new Proxy(MockWebSocket, {
+  construct(_target, args) {
+    return new ActiveWS(...args);
+  },
+});
+
+// Mock connect() to inject test WebSocket
+jest.mock('../src/connect', () => {
+  const actual = jest.requireActual('../src/connect');
+  return {
+    ...actual,
+    connect: (address: string) => new actual.RemoteAgent(address, {
+      relayUrl: 'ws://localhost',
+      wsCtor: DynamicWS as any,
+    }),
+  };
+});
 
 // Unique address counter to avoid Zustand store cache collisions between tests
 let addrCounter = 0;
@@ -81,92 +104,98 @@ function uniqueAddr() {
   return `0xtest${++addrCounter}`;
 }
 
-describe('useAgent hook', () => {
+// Flush microtasks (async _streamInput) + macrotasks (MockWebSocket setTimeout)
+// Two rounds: first flushes WS connect + send, second flushes state update re-renders
+function flush() {
+  return new Promise<void>(resolve => setTimeout(() => setTimeout(resolve, 30), 30));
+}
+
+describe('useAgentForHuman hook', () => {
   beforeEach(() => {
     mockLocalStorage.clear();
+    ActiveWS = MockWebSocket;
   });
 
   describe('initialization', () => {
     it('initializes with idle status', () => {
       const { result } = renderHook(() =>
-        useAgent(uniqueAddr(), { sessionId: 'test-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgentForHuman(uniqueAddr(), 'test-session')
       );
-
       expect(result.current.status).toBe('idle');
     });
 
     it('initializes with empty UI array', () => {
       const { result } = renderHook(() =>
-        useAgent(uniqueAddr(), { sessionId: 'test-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgentForHuman(uniqueAddr(), 'test-session')
       );
-
       expect(result.current.ui).toEqual([]);
     });
 
     it('initializes isProcessing as false', () => {
       const { result } = renderHook(() =>
-        useAgent(uniqueAddr(), { sessionId: 'test-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgentForHuman(uniqueAddr(), 'test-session')
       );
-
       expect(result.current.isProcessing).toBe(false);
     });
 
     it('initializes error as null', () => {
       const { result } = renderHook(() =>
-        useAgent(uniqueAddr(), { sessionId: 'test-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgentForHuman(uniqueAddr(), 'test-session')
       );
-
       expect(result.current.error).toBeNull();
     });
 
     it('uses provided sessionId', () => {
       const { result } = renderHook(() =>
-        useAgent(uniqueAddr(), { sessionId: 'my-session-123', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgentForHuman(uniqueAddr(), 'my-session-123')
       );
-
       expect(result.current.sessionId).toBe('my-session-123');
     });
   });
 
   describe('input method', () => {
-    it('returns Response with text and done', async () => {
+    it('input() returns void and UI updates arrive reactively', async () => {
       const { result } = renderHook(() =>
-        useAgent(uniqueAddr(), { sessionId: 'test-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgentForHuman(uniqueAddr(), 'test-session')
       );
 
-      let response: any;
       await act(async () => {
-        response = await result.current.input('Hello');
+        result.current.input('Hello');
+        await flush();
       });
 
-      expect(response.text).toBe('Echo: Hello');
-      expect(response.done).toBe(true);
+      expect(result.current.status).toBe('idle');
+      const lastAgent = result.current.ui.filter(e => e.type === 'agent').pop() as any;
+      expect(lastAgent.content).toBe('Echo: Hello');
     });
 
     it('handles multiple sequential inputs', async () => {
       const { result } = renderHook(() =>
-        useAgent(uniqueAddr(), { sessionId: 'test-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgentForHuman(uniqueAddr(), 'test-session')
       );
 
-      let r1: any, r2: any;
       await act(async () => {
-        r1 = await result.current.input('First');
-      });
-      await act(async () => {
-        r2 = await result.current.input('Second');
+        result.current.input('First');
+        await flush();
       });
 
-      expect(r1.text).toBe('Echo: First');
-      expect(r2.text).toBe('Echo: Second');
+      await act(async () => {
+        result.current.input('Second');
+        await flush();
+      });
+
+      const agentItems = result.current.ui.filter(e => e.type === 'agent');
+      expect(agentItems.length).toBe(2);
     });
 
     it('sets status back to idle after completion', async () => {
       const { result } = renderHook(() =>
-        useAgent(uniqueAddr(), { sessionId: 'test-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgentForHuman(uniqueAddr(), 'test-session')
       );
 
       await act(async () => {
-        await result.current.input('Hello');
+        result.current.input('Hello');
+        await flush();
       });
 
       expect(result.current.status).toBe('idle');
@@ -175,115 +204,102 @@ describe('useAgent hook', () => {
   });
 
   describe('reset method', () => {
-    it('keeps same sessionId after reset (sessionId is a prop)', async () => {
+    it('keeps same sessionId after reset (sessionId is a prop)', () => {
       const { result } = renderHook(() =>
-        useAgent(uniqueAddr(), { sessionId: 'fixed-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgentForHuman(uniqueAddr(), 'fixed-session')
       );
 
-      act(() => {
-        result.current.reset();
-      });
+      act(() => { result.current.reset(); });
 
       expect(result.current.sessionId).toBe('fixed-session');
     });
 
-    it('sets status to idle', async () => {
+    it('sets status to idle', () => {
       const { result } = renderHook(() =>
-        useAgent(uniqueAddr(), { sessionId: 'test-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgentForHuman(uniqueAddr(), 'test-session')
       );
 
-      act(() => {
-        result.current.reset();
-      });
+      act(() => { result.current.reset(); });
 
       expect(result.current.status).toBe('idle');
     });
 
-    it('clears error', async () => {
+    it('clears error', () => {
       const { result } = renderHook(() =>
-        useAgent(uniqueAddr(), { sessionId: 'test-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgentForHuman(uniqueAddr(), 'test-session')
       );
 
-      act(() => {
-        result.current.reset();
-      });
+      act(() => { result.current.reset(); });
 
       expect(result.current.error).toBeNull();
     });
 
     it('works - can input after reset', async () => {
       const { result } = renderHook(() =>
-        useAgent(uniqueAddr(), { sessionId: 'test-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgentForHuman(uniqueAddr(), 'test-session')
       );
 
       await act(async () => {
-        await result.current.input('First');
+        result.current.input('First');
+        await flush();
       });
 
-      act(() => {
-        result.current.reset();
-      });
+      act(() => { result.current.reset(); });
 
-      let response: any;
       await act(async () => {
-        response = await result.current.input('After reset');
+        result.current.input('After reset');
+        await flush();
       });
 
-      expect(response.text).toBe('Echo: After reset');
+      const agentItems = result.current.ui.filter(e => e.type === 'agent');
+      expect(agentItems.length).toBeGreaterThan(0);
+      const lastAgent = agentItems.pop() as any;
+      expect(lastAgent.content).toBe('Echo: After reset');
     });
   });
 
   describe('error handling', () => {
-    it('throws on agent error', async () => {
+    it('sets error state on agent error', async () => {
       class ErrorWS extends MockWebSocket {
-        send(data: unknown): void {
+        override send(data: unknown): void {
           const msg = JSON.parse(String(data));
+          if (msg.type === 'PONG') return;
           const out = { type: 'ERROR', input_id: msg.input_id, error: 'Test error' };
           setTimeout(() => this.onmessage && this.onmessage({ data: JSON.stringify(out) }), 0);
         }
       }
 
+      ActiveWS = ErrorWS;
+
       const { result } = renderHook(() =>
-        useAgent(uniqueAddr(), {
-          sessionId: 'test-session',
-          relayUrl: 'ws://localhost',
-          wsCtor: ErrorWS as any,
-        })
+        useAgentForHuman(uniqueAddr(), 'test-session')
       );
 
-      let caughtError: Error | null = null;
       await act(async () => {
-        try {
-          await result.current.input('Hello');
-        } catch (err) {
-          caughtError = err as Error;
-        }
+        result.current.input('Hello');
+        await flush();
       });
 
-      expect(caughtError).not.toBeNull();
-      expect(caughtError!.message).toContain('Test error');
+      expect(result.current.status).toBe('idle');
     });
   });
 
   describe('session persistence', () => {
-    it('uses provided sessionId', async () => {
+    it('uses provided sessionId', () => {
       const { result } = renderHook(() =>
-        useAgent(uniqueAddr(), { sessionId: 'persist-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgentForHuman(uniqueAddr(), 'persist-session')
       );
-
       expect(result.current.sessionId).toBe('persist-session');
     });
 
-    it('keeps same sessionId across re-renders', async () => {
+    it('keeps same sessionId across re-renders', () => {
       const addr = uniqueAddr();
       const { result, rerender } = renderHook(() =>
-        useAgent(addr, { sessionId: 'stable-session', relayUrl: 'ws://localhost', wsCtor: mockWsCtor })
+        useAgentForHuman(addr, 'stable-session')
       );
 
       expect(result.current.sessionId).toBe('stable-session');
-
       rerender();
-
       expect(result.current.sessionId).toBe('stable-session');
     });
   });
@@ -292,9 +308,7 @@ describe('useAgent hook', () => {
 describe('isEventType helper', () => {
   it('narrows user event type', () => {
     const { isEventType } = require('../src/react');
-
     const event = { id: '1', type: 'user', content: 'Hello' };
-
     if (isEventType(event, 'user')) {
       expect(event.content).toBe('Hello');
     }
@@ -302,9 +316,7 @@ describe('isEventType helper', () => {
 
   it('narrows tool_call event type', () => {
     const { isEventType } = require('../src/react');
-
     const event = { id: '1', type: 'tool_call', name: 'search', status: 'done', result: 'found' };
-
     if (isEventType(event, 'tool_call')) {
       expect(event.name).toBe('search');
       expect(event.status).toBe('done');

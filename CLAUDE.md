@@ -80,7 +80,7 @@ npm run test:watch
 
 4. **Session**: Two-layer architecture
    - **Base RemoteAgent** (`connect()`): In-memory only, lost on process restart
-   - **React hook** (`useAgent()`): Auto-persists to localStorage via Zustand, keyed by `co:agent:{address}:session:{sessionId}`
+   - **React hook** (`useAgentForHuman()`): Auto-persists to localStorage via Zustand, keyed by `co:agent:{address}:session:{sessionId}`
    - Server sends session state with every streaming event; client syncs it
    - Local Agent: inspect via `agent.getSession()`
 
@@ -147,7 +147,7 @@ CONNECTONION_LOG=./my-agent.log # Override default log path
 ### Agent State Management
 - **Persistent conversation**: `this.messages` array (lazy-init, persists across `input()` calls)
 - **Reset conversation**: `agent.resetConversation()` clears messages and history
-- **Session & trace**: In-memory for local Agent; RemoteAgent syncs session from server on each streaming event. React `useAgent` hook adds localStorage persistence via Zustand
+- **Session & trace**: In-memory for local Agent; RemoteAgent syncs session from server on each streaming event. React `useAgentForHuman` hook adds localStorage persistence via Zustand
 
 ### Tool Execution
 - **Parallel execution**: All tool calls in single LLM response run via `Promise.all`
@@ -221,7 +221,7 @@ The default model is Anthropic Claude Sonnet 3.5 (`claude-3-5-sonnet-20241022`),
 ### Conversation Persistence
 - **Local Agent**: `this.messages` persists across `input()` calls in memory. Call `resetConversation()` to start fresh.
 - **RemoteAgent** (`connect()`): `currentSession` synced from server on each streaming event, kept in memory only.
-- **React hook** (`useAgent()`): Session auto-persists to localStorage via Zustand by `sessionId`. Survives browser refresh. Call `reset()` to clear.
+- **React hook** (`useAgentForHuman()`): Session auto-persists to localStorage via Zustand by `sessionId`. Survives browser refresh. Call `reset()` to clear.
 
 ### Tool Parameter Mapping
 Tools receive named arguments as objects, but functions expect positional parameters. The tool system maps `args: {a: 1, b: 2}` to `func(1, 2)` using parameter order from the function signature.

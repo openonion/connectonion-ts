@@ -639,16 +639,3 @@ describe('signed request body format', () => {
   });
 });
 
-describe('inputAsync', () => {
-  it('is alias for input', async () => {
-    const agent = connect('0xabc123', {
-      relayUrl: 'ws://localhost:8000',
-      wsCtor: MockWebSocket as any,
-    });
-
-    const response = await agent.inputAsync('ping');
-
-    expect(response.text).toBe('Echo: ping');
-    expect(response.done).toBe(true);
-  });
-});

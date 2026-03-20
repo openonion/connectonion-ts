@@ -1,19 +1,18 @@
+/**
+ * @llm-note
+ *   Dependencies: imports from [src/address (type-only)] | imported by [all connect/ files, src/react/]
+ *   Data flow: defines interfaces used by RemoteAgent for WebSocket message parsing → ChatItem union rendered by UI consumers → SessionState synced between client/server
+ *   State/Effects: pure type definitions, no runtime logic or side effects
+ *   Integration: exports Response, ChatItem (14-variant union), ChatItemType, WebSocketLike, WebSocketCtor, ResolvedEndpoint, AgentInfo, ConnectOptions, SessionState, ApprovalMode, AgentStatus, ConnectionState
+ */
 import type * as address from '../address';
 
 export type { AddressData } from '../address';
-
-// ============================================================================
-// Response Type
-// ============================================================================
 
 export interface Response {
   text: string;
   done: boolean;
 }
-
-// ============================================================================
-// Chat Item Types (data for rendering chat UI)
-// ============================================================================
 
 export type ChatItemType = 'user' | 'agent' | 'thinking' | 'tool_call' | 'ask_user' | 'approval_needed' | 'onboard_required' | 'onboard_success' | 'intent' | 'eval' | 'compact' | 'tool_blocked' | 'ulw_turns_reached' | 'plan_review';
 
@@ -33,10 +32,6 @@ export type ChatItem =
   | { id: string; type: 'ulw_turns_reached'; turns_used: number; max_turns: number }
   | { id: string; type: 'plan_review'; plan_content: string };
 
-// ============================================================================
-// WebSocket Types (internal, exported for cross-file use)
-// ============================================================================
-
 export type WebSocketLike = {
   onopen: ((ev?: unknown) => unknown) | null;
   onmessage: ((ev: { data: unknown }) => unknown) | null;
@@ -48,18 +43,10 @@ export type WebSocketLike = {
 
 export type WebSocketCtor = new (url: string) => WebSocketLike;
 
-// ============================================================================
-// Endpoint Resolution
-// ============================================================================
-
 export interface ResolvedEndpoint {
   httpUrl: string;
   wsUrl: string;
 }
-
-// ============================================================================
-// Agent Info
-// ============================================================================
 
 export interface SkillInfo {
   name: string;
@@ -76,10 +63,6 @@ export interface AgentInfo {
   version?: string;
   online: boolean;
 }
-
-// ============================================================================
-// Connect Options
-// ============================================================================
 
 export interface ConnectOptions {
   /** Signing keys for authenticated requests */
@@ -101,10 +84,6 @@ export interface ConnectOptions {
   wsCtor?: WebSocketCtor;
 }
 
-// ============================================================================
-// Session State
-// ============================================================================
-
 export interface SessionState {
   session_id?: string;
   messages?: Array<{ role: string; content: string }>;
@@ -117,12 +96,10 @@ export interface SessionState {
   ulw_turns_used?: number;
 }
 
-// ============================================================================
-// Agent Status & Approval Mode
-// ============================================================================
-
 export type ApprovalMode = 'safe' | 'plan' | 'accept_edits' | 'ulw';
 
 export type AgentStatus = 'idle' | 'working' | 'waiting';
 
 export type ConnectionState = 'disconnected' | 'connected' | 'reconnecting';
+
+export type OutgoingMessage = Record<string, unknown>;

@@ -1,3 +1,10 @@
+/**
+ * @llm-note
+ *   Dependencies: imports from [src/connect/types, src/connect/remote-agent, src/connect/endpoint] | imported by [src/index.ts, src/react/]
+ *   Data flow: connect(agentAddress, options?) → new RemoteAgent(agentAddress, options)
+ *   State/Effects: pure factory, no state
+ *   Integration: barrel for connect subsystem — re-exports types, RemoteAgent, fetchAgentInfo
+ */
 import { ConnectOptions } from './types';
 import { RemoteAgent } from './remote-agent';
 

@@ -1,8 +1,15 @@
+/**
+ * @llm-note
+ *   Dependencies: imports from [src/connect/types] | imported by [src/connect/remote-agent.ts, src/connect/handlers.ts, src/connect/index.ts]
+ *   Data flow: resolveEndpoint fetches agent endpoints from relay → verifies identity → returns {httpUrl, wsUrl}
+ *   State/Effects: HTTP fetch requests to relay/agent endpoints (timeout-bounded) | no persistent state
+ *   Integration: exposes resolveEndpoint(), fetchAgentInfo(), getWebSocketCtor(), generateUUID(), normalizeRelayUrl(), DEFAULT_RELAY
+ */
 import { AgentInfo, ResolvedEndpoint, WebSocketCtor } from './types';
 
 export const DEFAULT_RELAY = 'wss://oo.openonion.ai';
 
-export function defaultWebSocketCtor(): WebSocketCtor {
+export function getWebSocketCtor(): WebSocketCtor {
   const g = globalThis as { WebSocket?: WebSocketCtor };
   if (typeof g.WebSocket === 'function') {
     return g.WebSocket;
@@ -16,7 +23,6 @@ export function generateUUID(): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID();
   }
-  // Fallback for older environments
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
     const v = c === 'x' ? r : (r & 0x3) | 0x8;
@@ -24,22 +30,7 @@ export function generateUUID(): string {
   });
 }
 
-export function isBrowserEnv(): boolean {
-  return typeof globalThis !== 'undefined' &&
-    typeof (globalThis as { window?: unknown }).window !== 'undefined' &&
-    typeof (globalThis as { localStorage?: unknown }).localStorage !== 'undefined';
-}
-
-export function canonicalJSON(obj: Record<string, unknown>): string {
-  const sortedKeys = Object.keys(obj).sort();
-  const sortedObj: Record<string, unknown> = {};
-  for (const key of sortedKeys) {
-    sortedObj[key] = obj[key];
-  }
-  return JSON.stringify(sortedObj);
-}
-
-export function normalizeRelayBase(relayUrl: string): string {
+export function normalizeRelayUrl(relayUrl: string): string {
   let normalized = relayUrl.replace(/\/$/, '');
   if (normalized.endsWith('/ws/announce')) {
     normalized = normalized.slice(0, -('/ws/announce'.length));
@@ -49,7 +40,7 @@ export function normalizeRelayBase(relayUrl: string): string {
   return normalized;
 }
 
-function sortEndpoints(endpoints: string[]): string[] {
+function sortByProximity(endpoints: string[]): string[] {
   return [...endpoints].sort((a, b) => {
     const getPriority = (url: string): number => {
       if (url.includes('localhost') || url.includes('127.0.0.1')) return 0;
@@ -65,7 +56,7 @@ export async function resolveEndpoint(
   relayUrl: string,
   timeoutMs = 3000
 ): Promise<ResolvedEndpoint | null> {
-  const normalizedRelay = normalizeRelayBase(relayUrl);
+  const normalizedRelay = normalizeRelayUrl(relayUrl);
   const httpsRelay = normalizedRelay.replace(/^wss?:\/\//, 'https://');
 
   const response = await fetch(`${httpsRelay}/api/relay/agents/${agentAddress}`, {
@@ -76,7 +67,7 @@ export async function resolveEndpoint(
   const agentInfo = await response.json() as { endpoints?: string[] };
   if (!agentInfo.endpoints?.length) return null;
 
-  const httpEndpoints = sortEndpoints(agentInfo.endpoints).filter(ep => ep.startsWith('http'));
+  const httpEndpoints = sortByProximity(agentInfo.endpoints).filter(ep => ep.startsWith('http'));
 
   for (const httpUrl of httpEndpoints) {
     const infoResponse = await fetch(`${httpUrl}/info`, {
@@ -116,7 +107,7 @@ export async function fetchAgentInfo(
   agentAddress: string,
   relayUrl = DEFAULT_RELAY,
 ): Promise<AgentInfo> {
-  const httpsRelay = normalizeRelayBase(relayUrl).replace(/^wss?:\/\//, 'https://');
+  const httpsRelay = normalizeRelayUrl(relayUrl).replace(/^wss?:\/\//, 'https://');
 
   const relayRes = await fetch(`${httpsRelay}/api/relay/agents/${agentAddress}`, {
     signal: AbortSignal.timeout(5000),
@@ -124,7 +115,7 @@ export async function fetchAgentInfo(
   if (!relayRes.ok) return { address: agentAddress, online: false };
 
   const { endpoints = [] } = await relayRes.json() as { endpoints?: string[] };
-  const httpEndpoints = sortEndpoints(endpoints.filter(ep => ep.startsWith('http')));
+  const httpEndpoints = sortByProximity(endpoints.filter(ep => ep.startsWith('http')));
 
   for (const httpUrl of httpEndpoints) {
     const infoRes = await fetch(`${httpUrl}/info`, { signal: AbortSignal.timeout(3000) });

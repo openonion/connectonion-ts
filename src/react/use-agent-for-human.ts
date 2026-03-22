@@ -53,17 +53,10 @@ export interface UseAgentForHumanReturn {
    * The caller decides when and how often to invoke this — no built-in interval.
    *
    * @param sessionId - Session UUID to probe
-   * @returns 'running' | 'suspended' | 'completed' | 'not_found'
+   * @returns 'executing' | 'suspended' | 'connected' | 'not_found'
    */
-  checkSessionStatus: (sessionId: string) => Promise<'running' | 'suspended' | 'completed' | 'not_found'>;
+  checkSessionStatus: (sessionId: string) => Promise<'executing' | 'suspended' | 'connected' | 'not_found'>;
 
-  /**
-   * Lightweight HTTP check for the current session (no WebSocket relay required).
-   * Prefer this over `checkSessionStatus` when you only need a quick alive/dead signal.
-   *
-   * @returns 'running' | 'done' | 'not_found'
-   */
-  checkSession: () => Promise<'running' | 'done' | 'not_found'>;
 
   /** Current approval mode. Defaults to 'safe' when no session exists yet. */
   mode: ApprovalMode;
@@ -213,30 +206,19 @@ export function useAgentForHuman(
   }, [agent]);
 
   // Restore persisted session into the RemoteAgent on mount or when sessionId changes.
-  // The agent holds session state in memory only; without this restore the server would
-  // receive a sessionless request and start a brand-new conversation instead of resuming.
-  // After restoring, auto-reconnect if the server session is still running.
+  // Then auto-reconnect to sync with server (get newer data, resume executing agent, etc.)
   useEffect(() => {
     if (session) {
       (agent as any)._currentSession = { ...session, session_id: sessionId };
       (agent as any)._chatItems = [...ui];
     } else if (messages.length > 0) {
-      // No full session snapshot yet, but we have raw messages — build a minimal session
-      // so the server can reconstruct conversation history.
       (agent as any)._currentSession = { session_id: sessionId, messages };
       (agent as any)._chatItems = [...ui];
     }
 
-    // Auto-reconnect: if we have a persisted session, check if server is still running
-    if (sessionId && (session || messages.length > 0)) {
-      agent.checkSession(sessionId).then(status => {
-        if (status === 'running' && agent.connectionState === 'disconnected') {
-          agent.attach(sessionId);
-        }
-      }).catch(() => {
-        // Server unreachable — stay disconnected, user can retry manually
-      });
-    }
+    // No auto-reconnect on mount. Show cached conversation from localStorage.
+    // When user sends next message, input() → _ensureConnected() → CONNECT
+    // will sync with server (session merge, server_newer, etc.).
   }, [sessionId]);
 
   const input = (prompt: string, options?: { images?: string[] }) => {
@@ -308,7 +290,6 @@ export function useAgentForHuman(
     isProcessing: status !== 'idle',
     error,
     checkSessionStatus: (sid: string) => agent.checkSessionStatus(sid),
-    checkSession: () => agent.checkSession(sessionId),
     mode: session?.mode || 'safe',
     ulwTurns: session?.ulw_turns ?? null,
     ulwTurnsUsed: session?.ulw_turns_used ?? null,

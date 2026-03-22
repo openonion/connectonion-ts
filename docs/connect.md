@@ -200,16 +200,30 @@ interface UIEvent {
 
 ---
 
-## Relay URLs
+## Connection
 
-- Production: `wss://oo.openonion.ai/ws/announce` (default)
-- Local: `ws://localhost:8000/ws/announce`
+The SDK opens a persistent WebSocket and sends CONNECT to authenticate:
 
-```ts
-const agent = connect('0x...', { relayUrl: 'ws://localhost:8000/ws/announce' });
+```
+WS open → CONNECT { auth, session_id? } → CONNECTED { session_id, status }
+           INPUT { prompt }               → streaming events → OUTPUT
+           INPUT { prompt }               → ... (same WS, reused)
 ```
 
-Relay URLs accept base (`wss://oo.openonion.ai`), `/ws`, or `/ws/announce`.
+Server decides based on session_id:
+- No session_id → `status: "new"` (fresh session)
+- session_id found running → `status: "running"` (resume, buffered events follow)
+- session_id completed → `status: "completed"`
+- session_id not found → `status: "new"` (start fresh)
+
+## Relay URLs
+
+- Production: `wss://oo.openonion.ai` (default)
+- Local: `ws://localhost:8000`
+
+```ts
+const agent = connect('0x...', { relayUrl: 'ws://localhost:8000' });
+```
 
 Or set `RELAY_URL` environment variable.
 

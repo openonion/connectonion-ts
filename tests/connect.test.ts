@@ -16,7 +16,7 @@
 import { connect, RemoteAgent } from '../src/connect';
 import * as address from '../src/address';
 
-// Mock WebSocket that returns OUTPUT immediately
+// Mock WebSocket that handles INIT → CONNECTED → INPUT → OUTPUT protocol
 class MockWebSocket {
   public onopen: ((ev?: unknown) => unknown) | null = null;
   public onmessage: ((ev: { data: unknown }) => unknown) | null = null;
@@ -30,19 +30,25 @@ class MockWebSocket {
 
   send(data: unknown): void {
     const msg = JSON.parse(String(data));
-    const out = {
-      type: 'OUTPUT',
-      input_id: msg.input_id,
-      result: `Echo: ${msg.prompt}`,
-      session: { messages: [] },
-    };
-    setTimeout(() => this.onmessage && this.onmessage({ data: JSON.stringify(out) }), 0);
+    if (msg.type === 'CONNECT') {
+      setTimeout(() => this.onmessage && this.onmessage({
+        data: JSON.stringify({ type: 'CONNECTED', session_id: 'test-session', status: 'new' })
+      }), 0);
+    } else if (msg.type === 'INPUT') {
+      const out = {
+        type: 'OUTPUT',
+        input_id: msg.input_id,
+        result: `Echo: ${msg.prompt}`,
+        session: { messages: [] },
+      };
+      setTimeout(() => this.onmessage && this.onmessage({ data: JSON.stringify(out) }), 0);
+    }
   }
 
   close(): void {
     if (!this.closed) {
       this.closed = true;
-      this.onclose && this.onclose({});
+      // Don't call onclose — intentional close from reset/cleanup
     }
   }
 }
@@ -60,6 +66,8 @@ describe('Response type', () => {
     expect(response).toHaveProperty('done');
     expect(response.text).toBe('Echo: ping');
     expect(response.done).toBe(true);
+
+    agent.reset();
   });
 });
 
@@ -115,16 +123,14 @@ describe('Status management', () => {
     class DelayedWS extends MockWebSocket {
       send(data: unknown): void {
         const msg = JSON.parse(String(data));
-        const out = {
-          type: 'OUTPUT',
-          input_id: msg.input_id,
-          result: 'done',
-          session: {},
-        };
-        // Delay response to allow status check
-        setTimeout(() => {
-          this.onmessage && this.onmessage({ data: JSON.stringify(out) });
-        }, 10);
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 'test', status: 'new' })
+          }), 0);
+        } else if (msg.type === 'INPUT') {
+          const out = { type: 'OUTPUT', input_id: msg.input_id, result: 'done', session: {} };
+          setTimeout(() => this.onmessage && this.onmessage({ data: JSON.stringify(out) }), 20);
+        }
       }
     }
 
@@ -135,19 +141,28 @@ describe('Status management', () => {
 
     const promise = agent.input('test');
 
-    // Give time for WebSocket to open and send
-    await new Promise(resolve => setTimeout(resolve, 5));
+    // Give time for WebSocket to open, INIT, CONNECTED, and INPUT to send
+    await new Promise(resolve => setTimeout(resolve, 10));
     expect(agent.status).toBe('working');
 
     await promise;
     expect(agent.status).toBe('idle');
+
+    agent.reset();
   });
 
   it('sets status to waiting on ask_user', async () => {
     class AskUserWS extends MockWebSocket {
-      send(_data: unknown): void {
-        const out = { type: 'ask_user', text: 'What color?' };
-        setTimeout(() => this.onmessage && this.onmessage({ data: JSON.stringify(out) }), 0);
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 'test', status: 'new' })
+          }), 0);
+        } else if (msg.type === 'INPUT') {
+          const out = { type: 'ask_user', text: 'What color?' };
+          setTimeout(() => this.onmessage && this.onmessage({ data: JSON.stringify(out) }), 0);
+        }
       }
     }
 
@@ -172,8 +187,14 @@ describe('Status management', () => {
     class ErrorWS extends MockWebSocket {
       send(data: unknown): void {
         const msg = JSON.parse(String(data));
-        const out = { type: 'ERROR', input_id: msg.input_id, error: 'failed' };
-        setTimeout(() => this.onmessage && this.onmessage({ data: JSON.stringify(out) }), 0);
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 'test', status: 'new' })
+          }), 0);
+        } else if (msg.type === 'INPUT') {
+          const out = { type: 'ERROR', input_id: msg.input_id, error: 'failed' };
+          setTimeout(() => this.onmessage && this.onmessage({ data: JSON.stringify(out) }), 0);
+        }
       }
     }
 
@@ -199,6 +220,8 @@ describe('UI events', () => {
     const userEvents = agent.ui.filter(e => e.type === 'user');
     expect(userEvents.length).toBe(1);
     expect((userEvents[0] as any).content).toBe('Hello');
+
+    agent.reset();
   });
 
   it('adds agent event on OUTPUT', async () => {
@@ -212,24 +235,32 @@ describe('UI events', () => {
     const agentEvents = agent.ui.filter(e => e.type === 'agent');
     expect(agentEvents.length).toBe(1);
     expect((agentEvents[0] as any).content).toBe('Echo: Hello');
+
+    agent.reset();
   });
 
   it('adds tool_call event on tool_call stream', async () => {
     class ToolCallWS extends MockWebSocket {
       send(data: unknown): void {
         const msg = JSON.parse(String(data));
-        // Send tool_call event
-        setTimeout(() => {
-          this.onmessage && this.onmessage({
-            data: JSON.stringify({ type: 'tool_call', tool_id: 't1', name: 'search', args: { q: 'test' } })
-          });
-        }, 0);
-        // Then send OUTPUT
-        setTimeout(() => {
-          this.onmessage && this.onmessage({
-            data: JSON.stringify({ type: 'OUTPUT', input_id: msg.input_id, result: 'done', session: {} })
-          });
-        }, 5);
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 'test', status: 'new' })
+          }), 0);
+        } else if (msg.type === 'INPUT') {
+          // Send tool_call event
+          setTimeout(() => {
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({ type: 'tool_call', tool_id: 't1', name: 'search', args: { q: 'test' } })
+            });
+          }, 0);
+          // Then send OUTPUT
+          setTimeout(() => {
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({ type: 'OUTPUT', input_id: msg.input_id, result: 'done', session: {} })
+            });
+          }, 5);
+        }
       }
     }
 
@@ -244,30 +275,38 @@ describe('UI events', () => {
     expect(toolEvents.length).toBe(1);
     expect((toolEvents[0] as any).name).toBe('search');
     expect((toolEvents[0] as any).status).toBe('running');
+
+    agent.reset();
   });
 
   it('merges tool_result into existing tool_call', async () => {
     class ToolResultWS extends MockWebSocket {
       send(data: unknown): void {
         const msg = JSON.parse(String(data));
-        // Send tool_call
-        setTimeout(() => {
-          this.onmessage && this.onmessage({
-            data: JSON.stringify({ type: 'tool_call', tool_id: 't1', name: 'search', args: {} })
-          });
-        }, 0);
-        // Send tool_result with same id
-        setTimeout(() => {
-          this.onmessage && this.onmessage({
-            data: JSON.stringify({ type: 'tool_result', tool_id: 't1', result: 'Found 3 results', status: 'success' })
-          });
-        }, 2);
-        // Then send OUTPUT
-        setTimeout(() => {
-          this.onmessage && this.onmessage({
-            data: JSON.stringify({ type: 'OUTPUT', input_id: msg.input_id, result: 'done', session: {} })
-          });
-        }, 5);
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 'test', status: 'new' })
+          }), 0);
+        } else if (msg.type === 'INPUT') {
+          // Send tool_call
+          setTimeout(() => {
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({ type: 'tool_call', tool_id: 't1', name: 'search', args: {} })
+            });
+          }, 0);
+          // Send tool_result with same id
+          setTimeout(() => {
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({ type: 'tool_result', tool_id: 't1', result: 'Found 3 results', status: 'success' })
+            });
+          }, 2);
+          // Then send OUTPUT
+          setTimeout(() => {
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({ type: 'OUTPUT', input_id: msg.input_id, result: 'done', session: {} })
+            });
+          }, 5);
+        }
       }
     }
 
@@ -283,20 +322,28 @@ describe('UI events', () => {
     expect(toolEvents.length).toBe(1);
     expect((toolEvents[0] as any).status).toBe('done');
     expect((toolEvents[0] as any).result).toBe('Found 3 results');
+
+    agent.reset();
   });
 
   it('adds thinking event', async () => {
     class ThinkingWS extends MockWebSocket {
       send(data: unknown): void {
         const msg = JSON.parse(String(data));
-        setTimeout(() => {
-          this.onmessage && this.onmessage({ data: JSON.stringify({ type: 'thinking' }) });
-        }, 0);
-        setTimeout(() => {
-          this.onmessage && this.onmessage({
-            data: JSON.stringify({ type: 'OUTPUT', input_id: msg.input_id, result: 'done', session: {} })
-          });
-        }, 5);
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 'test', status: 'new' })
+          }), 0);
+        } else if (msg.type === 'INPUT') {
+          setTimeout(() => {
+            this.onmessage && this.onmessage({ data: JSON.stringify({ type: 'thinking' }) });
+          }, 0);
+          setTimeout(() => {
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({ type: 'OUTPUT', input_id: msg.input_id, result: 'done', session: {} })
+            });
+          }, 5);
+        }
       }
     }
 
@@ -309,16 +356,25 @@ describe('UI events', () => {
 
     const thinkingEvents = agent.ui.filter(e => e.type === 'thinking');
     expect(thinkingEvents.length).toBe(1);
+
+    agent.reset();
   });
 
   it('adds ask_user event', async () => {
     class AskUserWS extends MockWebSocket {
-      send(_data: unknown): void {
-        setTimeout(() => {
-          this.onmessage && this.onmessage({
-            data: JSON.stringify({ type: 'ask_user', text: 'Which color?' })
-          });
-        }, 0);
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 'test', status: 'new' })
+          }), 0);
+        } else if (msg.type === 'INPUT') {
+          setTimeout(() => {
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({ type: 'ask_user', text: 'Which color?' })
+            });
+          }, 0);
+        }
       }
     }
 
@@ -348,11 +404,15 @@ describe('UI events', () => {
     });
 
     await agent.input('First');
+    // Reset connection so second input creates fresh WS
+    (agent as any)._closeWs();
     await agent.input('Second');
 
     const ids = agent.ui.map(e => e.id);
     const uniqueIds = new Set(ids);
     expect(uniqueIds.size).toBe(ids.length);
+
+    agent.reset();
   });
 });
 
@@ -391,13 +451,19 @@ describe('Session management', () => {
     class SessionWS extends MockWebSocket {
       send(data: unknown): void {
         const msg = JSON.parse(String(data));
-        const out = {
-          type: 'OUTPUT',
-          input_id: msg.input_id,
-          result: 'done',
-          session: { messages: [{ role: 'user', content: 'test' }], turn: 1 },
-        };
-        setTimeout(() => this.onmessage && this.onmessage({ data: JSON.stringify(out) }), 0);
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 'test', status: 'new' })
+          }), 0);
+        } else if (msg.type === 'INPUT') {
+          const out = {
+            type: 'OUTPUT',
+            input_id: msg.input_id,
+            result: 'done',
+            session: { messages: [{ role: 'user', content: 'test' }], turn: 1 },
+          };
+          setTimeout(() => this.onmessage && this.onmessage({ data: JSON.stringify(out) }), 0);
+        }
       }
     }
 
@@ -411,32 +477,40 @@ describe('Session management', () => {
     expect(agent.currentSession).not.toBeNull();
     expect(agent.currentSession?.messages?.length).toBe(1);
     expect(agent.currentSession?.turn).toBe(1);
+
+    agent.reset();
   });
 
   it('syncs session from streaming events', async () => {
     class StreamSessionWS extends MockWebSocket {
       send(data: unknown): void {
         const msg = JSON.parse(String(data));
-        // Send thinking event with session
-        setTimeout(() => {
-          this.onmessage && this.onmessage({
-            data: JSON.stringify({
-              type: 'thinking',
-              session: { messages: [{ role: 'user', content: 'test' }], turn: 1 },
-            })
-          });
-        }, 0);
-        // Then OUTPUT
-        setTimeout(() => {
-          this.onmessage && this.onmessage({
-            data: JSON.stringify({
-              type: 'OUTPUT',
-              input_id: msg.input_id,
-              result: 'done',
-              session: { messages: [{ role: 'user', content: 'test' }, { role: 'assistant', content: 'done' }], turn: 1 },
-            })
-          });
-        }, 5);
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 'test', status: 'new' })
+          }), 0);
+        } else if (msg.type === 'INPUT') {
+          // Send thinking event with session
+          setTimeout(() => {
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({
+                type: 'thinking',
+                session: { messages: [{ role: 'user', content: 'test' }], turn: 1 },
+              })
+            });
+          }, 0);
+          // Then OUTPUT
+          setTimeout(() => {
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({
+                type: 'OUTPUT',
+                input_id: msg.input_id,
+                result: 'done',
+                session: { messages: [{ role: 'user', content: 'test' }, { role: 'assistant', content: 'done' }], turn: 1 },
+              })
+            });
+          }, 5);
+        }
       }
     }
 
@@ -449,6 +523,8 @@ describe('Session management', () => {
 
     expect(agent.currentSession).not.toBeNull();
     expect(agent.currentSession?.messages?.length).toBe(2);
+
+    agent.reset();
   });
 
   it('preserves session across multiple inputs', async () => {
@@ -464,6 +540,8 @@ describe('Session management', () => {
     await agent.input('second');
     // Session should still exist (not cleared on success)
     expect(agent.currentSession).not.toBeNull();
+
+    agent.reset();
   });
 
   it('works after reset', async () => {
@@ -477,6 +555,8 @@ describe('Session management', () => {
     const response = await agent.input('new');
 
     expect(response.text).toBe('Echo: new');
+
+    agent.reset();
   });
 });
 
@@ -491,14 +571,22 @@ describe('relay fallback', () => {
 
     expect(response.text).toBe('Echo: ping');
     expect(response.done).toBe(true);
+
+    agent.reset();
   });
 
   it('rejects on ERROR response', async () => {
     class ErrorWS extends MockWebSocket {
       send(data: unknown): void {
         const msg = JSON.parse(String(data));
-        const out = { type: 'ERROR', input_id: msg.input_id, error: 'not found' };
-        setTimeout(() => this.onmessage && this.onmessage({ data: JSON.stringify(out) }), 0);
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 'test', status: 'new' })
+          }), 0);
+        } else if (msg.type === 'INPUT') {
+          const out = { type: 'ERROR', input_id: msg.input_id, error: 'not found' };
+          setTimeout(() => this.onmessage && this.onmessage({ data: JSON.stringify(out) }), 0);
+        }
       }
     }
 
@@ -512,29 +600,39 @@ describe('relay fallback', () => {
 
   it('times out if no response', async () => {
     class NoReplyWS extends MockWebSocket {
-      send(_data: unknown): void {
-        // never replies
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 'test', status: 'new' })
+          }), 0);
+        }
+        // INPUT: never replies
       }
     }
 
     const agent = connect('0xabc', {
       relayUrl: 'ws://localhost:8000',
       wsCtor: NoReplyWS as any,
-      enablePolling: false, // Disable polling so timeout rejects immediately
     });
 
     await expect(agent.input('hello', { timeoutMs: 50 })).rejects.toThrow(/timed out/);
+
+    agent.reset();
   });
 });
 
 describe('signed requests', () => {
-  it('includes signature when keys provided', async () => {
+  it('includes signature in CONNECT when keys provided', async () => {
     const keys = address.generate();
-    let capturedMessage: Record<string, unknown> | null = null;
+    let capturedConnect: Record<string, unknown> | null = null;
 
     class CapturingWS extends MockWebSocket {
       send(data: unknown): void {
-        capturedMessage = JSON.parse(String(data));
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'CONNECT') {
+          capturedConnect = msg;
+        }
         super.send(data);
       }
     }
@@ -547,18 +645,23 @@ describe('signed requests', () => {
 
     await agent.input('test');
 
-    expect(capturedMessage).not.toBeNull();
-    expect(capturedMessage!.from).toBe(keys.address);
-    expect(capturedMessage!.signature).toMatch(/^[a-f0-9]{128}$/);
-    expect(capturedMessage!.timestamp).toBeGreaterThan(0);
+    expect(capturedConnect).not.toBeNull();
+    expect(capturedConnect!.from).toBe(keys.address);
+    expect(capturedConnect!.signature).toMatch(/^[a-f0-9]{128}$/);
+    expect(capturedConnect!.timestamp).toBeGreaterThan(0);
+
+    agent.reset();
   });
 
   it('auto-generates keys when none provided', async () => {
-    let capturedMessage: Record<string, unknown> | null = null;
+    let capturedConnect: Record<string, unknown> | null = null;
 
     class CapturingWS extends MockWebSocket {
       send(data: unknown): void {
-        capturedMessage = JSON.parse(String(data));
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'CONNECT') {
+          capturedConnect = msg;
+        }
         super.send(data);
       }
     }
@@ -571,18 +674,23 @@ describe('signed requests', () => {
     await agent.input('test');
 
     // Keys are auto-generated on first use, so from and signature should be present
-    expect(capturedMessage).not.toBeNull();
-    expect(capturedMessage!.from).toBeDefined();
-    expect(capturedMessage!.signature).toBeDefined();
+    expect(capturedConnect).not.toBeNull();
+    expect(capturedConnect!.from).toBeDefined();
+    expect(capturedConnect!.signature).toBeDefined();
+
+    agent.reset();
   });
 
   it('signature is verifiable', async () => {
     const keys = address.generate();
-    let capturedMessage: Record<string, unknown> | null = null;
+    let capturedConnect: Record<string, unknown> | null = null;
 
     class CapturingWS extends MockWebSocket {
       send(data: unknown): void {
-        capturedMessage = JSON.parse(String(data));
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'CONNECT') {
+          capturedConnect = msg;
+        }
         super.send(data);
       }
     }
@@ -595,25 +703,23 @@ describe('signed requests', () => {
 
     await agent.input('hello world');
 
-    // Verify the signature
-    const payload = {
-      prompt: 'hello world',
-      to: '0xabc123',
-      timestamp: capturedMessage!.timestamp,
-    };
-    const sortedKeys = Object.keys(payload).sort();
+    // Verify the signature on the CONNECT payload
+    const initPayload = capturedConnect!.payload as Record<string, unknown>;
+    const sortedKeys = Object.keys(initPayload).sort();
     const sortedPayload: Record<string, unknown> = {};
     for (const key of sortedKeys) {
-      sortedPayload[key] = payload[key as keyof typeof payload];
+      sortedPayload[key] = initPayload[key];
     }
     const canonical = JSON.stringify(sortedPayload);
 
     const valid = address.verify(
       keys.address,
       canonical,
-      capturedMessage!.signature as string
+      capturedConnect!.signature as string
     );
     expect(valid).toBe(true);
+
+    agent.reset();
   });
 });
 
@@ -639,3 +745,29 @@ describe('signed request body format', () => {
   });
 });
 
+describe('persistent connection', () => {
+  it('reuses WebSocket across multiple input() calls', async () => {
+    let wsCount = 0;
+
+    class CountingWS extends MockWebSocket {
+      constructor(url: string) {
+        super(url);
+        wsCount++;
+      }
+    }
+
+    const agent = connect('0xabc123', {
+      relayUrl: 'ws://localhost:8000',
+      wsCtor: CountingWS as any,
+    });
+
+    await agent.input('first');
+    await agent.input('second');
+    await agent.input('third');
+
+    // Only ONE WebSocket should have been created
+    expect(wsCount).toBe(1);
+
+    agent.reset();
+  });
+});

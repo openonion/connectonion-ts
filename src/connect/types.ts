@@ -17,7 +17,7 @@ export interface Response {
 export type ChatItemType = 'user' | 'agent' | 'thinking' | 'tool_call' | 'ask_user' | 'approval_needed' | 'onboard_required' | 'onboard_success' | 'intent' | 'eval' | 'compact' | 'tool_blocked' | 'ulw_turns_reached' | 'plan_review';
 
 export type ChatItem =
-  | { id: string; type: 'user'; content: string; images?: string[] }
+  | { id: string; type: 'user'; content: string; images?: string[]; files?: FileAttachment[] }
   | { id: string; type: 'agent'; content: string; images?: string[] }
   | { id: string; type: 'thinking'; status: 'running' | 'done' | 'error'; model?: string; duration_ms?: number; content?: string; kind?: string; context_percent?: number; usage?: { input_tokens?: number; output_tokens?: number; prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; cost?: number } }
   | { id: string; type: 'tool_call'; name: string; args?: Record<string, unknown>; status: 'running' | 'done' | 'error'; result?: string; timing_ms?: number }
@@ -101,5 +101,12 @@ export type ApprovalMode = 'safe' | 'plan' | 'accept_edits' | 'ulw';
 export type AgentStatus = 'idle' | 'working' | 'waiting';
 
 export type ConnectionState = 'disconnected' | 'connected' | 'reconnecting';
+
+export interface FileAttachment {
+  name: string;
+  type: string;
+  size: number;
+  dataUrl: string;
+}
 
 export type OutgoingMessage = Record<string, unknown>;

@@ -3,6 +3,7 @@ export type {
   Response,
   ChatItem,
   ChatItemType,
+  FileAttachment,
   AgentStatus,
   ConnectionState,
   AgentInfo,

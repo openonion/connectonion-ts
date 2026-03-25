@@ -74,8 +74,9 @@ export interface UseAgentForHumanReturn {
    *
    * @param prompt - Natural-language instruction for the agent
    * @param options.images - Base64-encoded images to attach to the message
+   * @param options.files - File attachments with name, type, size, and dataUrl
    */
-  input: (prompt: string, options?: { images?: string[] }) => void;
+  input: (prompt: string, options?: { images?: string[]; files?: import('../connect/types').FileAttachment[] }) => void;
 
   /**
    * Send a typed message to the agent over the WebSocket.
@@ -221,7 +222,7 @@ export function useAgentForHuman(
     // will sync with server (session merge, server_newer, etc.).
   }, [sessionId]);
 
-  const input = (prompt: string, options?: { images?: string[] }) => {
+  const input = (prompt: string, options?: { images?: string[]; files?: import('../connect/types').FileAttachment[] }) => {
     setError(null);
 
     // Merge session before dispatching: the agent may have received a mode change via

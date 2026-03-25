@@ -74,10 +74,10 @@ export class RemoteAgent {
 
   // --- Public API ---
 
-  async input(prompt: string, options?: { images?: string[]; timeoutMs?: number }): Promise<Response> {
+  async input(prompt: string, options?: { images?: string[]; files?: import('./types').FileAttachment[]; timeoutMs?: number }): Promise<Response> {
     const timeoutMs = options?.timeoutMs ?? 600000;
 
-    this._addChatItem({ type: 'user', content: prompt, images: options?.images });
+    this._addChatItem({ type: 'user', content: prompt, images: options?.images, files: options?.files });
     this._addChatItem({ type: 'thinking', id: '__optimistic__', status: 'running' });
     this._status = 'working';
     this._onMessage?.();
@@ -89,6 +89,7 @@ export class RemoteAgent {
 
     const msg: Record<string, unknown> = { type: 'INPUT', input_id: inputId, prompt };
     if (options?.images?.length) msg.images = options.images;
+    if (options?.files?.length) msg.files = options.files.map(f => ({ name: f.name, data: f.dataUrl }));
     if (!isDirect) msg.to = this.address;
 
     this._ws!.send(JSON.stringify(msg));

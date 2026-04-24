@@ -191,5 +191,13 @@ export function mapEventToChatItem(
       });
       break;
     }
+
+    case 'files_received': {
+      addItem({
+        type: 'files_received',
+        files: (event.files || []) as Array<{ name: string; path: string }>,
+      });
+      break;
+    }
   }
 }

@@ -14,7 +14,7 @@ export interface Response {
   done: boolean;
 }
 
-export type ChatItemType = 'user' | 'agent' | 'thinking' | 'tool_call' | 'ask_user' | 'approval_needed' | 'onboard_required' | 'onboard_success' | 'intent' | 'eval' | 'compact' | 'tool_blocked' | 'ulw_turns_reached' | 'plan_review';
+export type ChatItemType = 'user' | 'agent' | 'thinking' | 'tool_call' | 'ask_user' | 'approval_needed' | 'onboard_required' | 'onboard_success' | 'intent' | 'eval' | 'compact' | 'tool_blocked' | 'ulw_turns_reached' | 'plan_review' | 'files_received';
 
 export type ChatItem =
   | { id: string; type: 'user'; content: string; images?: string[]; files?: FileAttachment[] }
@@ -30,7 +30,8 @@ export type ChatItem =
   | { id: string; type: 'compact'; status: 'compacting' | 'done' | 'error'; context_before?: number; context_after?: number; context_percent?: number; message?: string; error?: string }
   | { id: string; type: 'tool_blocked'; tool: string; reason: string; message: string; command?: string }
   | { id: string; type: 'ulw_turns_reached'; turns_used: number; max_turns: number }
-  | { id: string; type: 'plan_review'; plan_content: string };
+  | { id: string; type: 'plan_review'; plan_content: string }
+  | { id: string; type: 'files_received'; files: Array<{ name: string; path: string }> };
 
 export type WebSocketLike = {
   onopen: ((ev?: unknown) => unknown) | null;

@@ -771,3 +771,306 @@ describe('persistent connection', () => {
     agent.reset();
   });
 });
+
+describe('CONNECT sends session data', () => {
+  it('includes session in CONNECT message when _currentSession exists', async () => {
+    let capturedConnect: Record<string, unknown> | null = null;
+
+    class CapturingWS extends MockWebSocket {
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'CONNECT') capturedConnect = msg;
+        super.send(data);
+      }
+    }
+
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: CapturingWS as any });
+
+    // First input — no session yet
+    await agent.input('first');
+    expect(capturedConnect).not.toBeNull();
+    expect(capturedConnect!.session).toBeUndefined(); // no session on first connect
+
+    // Second input reuses connection, no new CONNECT
+    // Force reconnect to capture new CONNECT with session
+    (agent as any)._closeWs();
+    capturedConnect = null;
+    await agent.input('second');
+    expect(capturedConnect).not.toBeNull();
+    // After first input, _currentSession has session_id from CONNECTED + session from OUTPUT
+    // The CONNECT message includes whatever is in _currentSession
+    expect(capturedConnect!.session).toBeDefined();
+
+    agent.reset();
+  });
+});
+
+describe('INPUT does NOT contain session', () => {
+  it('INPUT message has no session field', async () => {
+    let capturedInput: Record<string, unknown> | null = null;
+
+    class CapturingWS extends MockWebSocket {
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'INPUT') capturedInput = msg;
+        super.send(data);
+      }
+    }
+
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: CapturingWS as any });
+    await agent.input('hello');
+
+    expect(capturedInput).not.toBeNull();
+    expect(capturedInput!.type).toBe('INPUT');
+    expect(capturedInput!.prompt).toBe('hello');
+    expect(capturedInput!.session).toBeUndefined();
+
+    agent.reset();
+  });
+});
+
+describe('reconnect statuses', () => {
+  it('reconnect with status "connected" resolves immediately', async () => {
+    class ConnectedWS extends MockWebSocket {
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 'abc', status: 'connected' })
+          }), 0);
+        }
+      }
+    }
+
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: ConnectedWS as any });
+    (agent as any)._currentSession = { session_id: 'abc' };
+
+    const result = await agent.reconnect('abc');
+    expect(result.done).toBe(true);
+    expect(agent.status).toBe('idle');
+
+    agent.reset();
+  });
+
+  it('reconnect with status "executing" waits for OUTPUT', async () => {
+    class ExecutingWS extends MockWebSocket {
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 'abc', status: 'executing' })
+          }), 0);
+          // Agent still executing — send OUTPUT after a delay
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'OUTPUT', result: 'done from server', session: {} })
+          }), 20);
+        }
+      }
+    }
+
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: ExecutingWS as any });
+    (agent as any)._currentSession = { session_id: 'abc' };
+
+    const result = await agent.reconnect('abc');
+    expect(result.text).toBe('done from server');
+    expect(result.done).toBe(true);
+
+    agent.reset();
+  });
+});
+
+describe('server_newer chat_items merge', () => {
+  it('updates _chatItems when CONNECTED has server_newer + chat_items', async () => {
+    class ServerNewerWS extends MockWebSocket {
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({
+              type: 'CONNECTED', session_id: 'abc', status: 'connected',
+              server_newer: true,
+              session: { messages: [{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'hello' }] },
+              chat_items: [
+                { id: '1', type: 'agent', content: 'hello from server' },
+                { id: '2', type: 'tool_call', name: 'search', status: 'done', result: 'found' },
+              ],
+            })
+          }), 0);
+        }
+      }
+    }
+
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: ServerNewerWS as any });
+    // Simulate existing user chat item
+    (agent as any)._chatItems = [{ id: 'u1', type: 'user', content: 'hi' }];
+    (agent as any)._currentSession = { session_id: 'abc' };
+
+    await agent.reconnect('abc');
+
+    // User items from client should be preserved, server items added
+    const userItems = agent.ui.filter(e => e.type === 'user');
+    const agentItems = agent.ui.filter(e => e.type === 'agent');
+    expect(userItems.length).toBe(1);
+    expect((userItems[0] as any).content).toBe('hi');
+    expect(agentItems.length).toBe(1);
+    expect((agentItems[0] as any).content).toBe('hello from server');
+
+    agent.reset();
+  });
+});
+
+describe('multi-turn on same WS', () => {
+  it('three input/output cycles accumulate UI events', async () => {
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: MockWebSocket as any });
+
+    await agent.input('first');
+    await agent.input('second');
+    await agent.input('third');
+
+    const userEvents = agent.ui.filter(e => e.type === 'user');
+    const agentEvents = agent.ui.filter(e => e.type === 'agent');
+    expect(userEvents.length).toBe(3);
+    expect(agentEvents.length).toBe(3);
+    expect((agentEvents[0] as any).content).toBe('Echo: first');
+    expect((agentEvents[2] as any).content).toBe('Echo: third');
+
+    agent.reset();
+  });
+});
+
+describe('setMode', () => {
+  it('sends mode_change message over WS', async () => {
+    let capturedModeChange: Record<string, unknown> | null = null;
+
+    class CapturingWS extends MockWebSocket {
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'mode_change') capturedModeChange = msg;
+        super.send(data);
+      }
+    }
+
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: CapturingWS as any });
+    await agent.input('hello'); // establish connection
+
+    agent.setMode('ulw', { turns: 5 });
+
+    expect(capturedModeChange).not.toBeNull();
+    expect(capturedModeChange!.mode).toBe('ulw');
+    expect(capturedModeChange!.turns).toBe(5);
+    expect(agent.mode).toBe('ulw');
+
+    agent.reset();
+  });
+});
+
+describe('interactive events', () => {
+  it('approval_needed sets status to waiting', async () => {
+    class ApprovalWS extends MockWebSocket {
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 'test', status: 'new' })
+          }), 0);
+        } else if (msg.type === 'INPUT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({
+              type: 'approval_needed', tool: 'bash', arguments: { command: 'rm -rf /' },
+              description: 'dangerous command'
+            })
+          }), 0);
+        }
+      }
+    }
+
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: ApprovalWS as any });
+    agent.input('do something dangerous');
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    expect(agent.status).toBe('waiting');
+    const approvalEvents = agent.ui.filter(e => e.type === 'approval_needed');
+    expect(approvalEvents.length).toBe(1);
+    expect((approvalEvents[0] as any).tool).toBe('bash');
+
+    agent.reset();
+  });
+
+  it('plan_review sets status to waiting', async () => {
+    class PlanWS extends MockWebSocket {
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 'test', status: 'new' })
+          }), 0);
+        } else if (msg.type === 'INPUT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'plan_review', plan_content: '1. Do A\n2. Do B' })
+          }), 0);
+        }
+      }
+    }
+
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: PlanWS as any });
+    agent.input('make a plan');
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    expect(agent.status).toBe('waiting');
+    const planEvents = agent.ui.filter(e => e.type === 'plan_review');
+    expect(planEvents.length).toBe(1);
+    expect((planEvents[0] as any).plan_content).toBe('1. Do A\n2. Do B');
+
+    agent.reset();
+  });
+
+  it('onboard_required sets status to waiting', async () => {
+    class OnboardWS extends MockWebSocket {
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({
+              type: 'ONBOARD_REQUIRED', methods: ['invite_code', 'payment'], payment_amount: 10
+            })
+          }), 0);
+        }
+      }
+    }
+
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: OnboardWS as any });
+    agent.input('hello');
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    expect(agent.status).toBe('waiting');
+    const onboardEvents = agent.ui.filter(e => e.type === 'onboard_required');
+    expect(onboardEvents.length).toBe(1);
+    expect((onboardEvents[0] as any).methods).toEqual(['invite_code', 'payment']);
+    expect((onboardEvents[0] as any).paymentAmount).toBe(10);
+
+    agent.reset();
+  });
+});
+
+describe('error handling', () => {
+  it('ERROR during execution rejects and sets idle', async () => {
+    class ErrorAfterInputWS extends MockWebSocket {
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 'test', status: 'new' })
+          }), 0);
+        } else if (msg.type === 'INPUT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'ERROR', message: 'agent crashed' })
+          }), 0);
+        }
+      }
+    }
+
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: ErrorAfterInputWS as any });
+    await expect(agent.input('crash')).rejects.toThrow(/agent crashed/);
+    expect(agent.status).toBe('idle');
+  });
+});

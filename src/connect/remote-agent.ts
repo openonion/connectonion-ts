@@ -444,7 +444,7 @@ export class RemoteAgent {
         data?.type === 'tool_call' || data?.type === 'tool_result' ||
         data?.type === 'thinking' || data?.type === 'assistant' ||
         data?.type === 'intent' || data?.type === 'eval' || data?.type === 'compact' ||
-        data?.type === 'tool_blocked') {
+        data?.type === 'tool_blocked' || data?.type === 'files_received') {
       this._clearPlaceholder();
       mapEventToChatItem(this._chatItems, data, (item) => this._addChatItem(item));
       if (data.session) {

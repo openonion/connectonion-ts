@@ -59,24 +59,28 @@ export async function resolveEndpoint(
   const normalizedRelay = normalizeRelayUrl(relayUrl);
   const httpsRelay = normalizedRelay.replace(/^wss?:\/\//, 'https://');
 
-  const response = await fetch(`${httpsRelay}/api/relay/agents/${agentAddress}`, {
+  // Outer lookup — on any fetch failure (DNS/TLS/timeout/CORS) resolve to
+  // null so RemoteAgent falls back to the relay /ws/input path. Swallowing
+  // here is the contract, not hiding a bug.
+  const agentInfo = await fetch(`${httpsRelay}/api/relay/agents/${agentAddress}`, {
     signal: AbortSignal.timeout(timeoutMs),
-  });
-  if (!response.ok) return null;
+  })
+    .then(r => r.ok ? r.json() as Promise<{ endpoints?: string[] }> : null)
+    .catch(() => null);
 
-  const agentInfo = await response.json() as { endpoints?: string[] };
-  if (!agentInfo.endpoints?.length) return null;
+  if (!agentInfo?.endpoints?.length) return null;
 
   const httpEndpoints = sortByProximity(agentInfo.endpoints).filter(ep => ep.startsWith('http'));
 
   for (const httpUrl of httpEndpoints) {
-    const infoResponse = await fetch(`${httpUrl}/info`, {
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!infoResponse.ok) continue;
+    // Probe — many advertised endpoints (localhost, docker IPs, NAT-bound
+    // public IPs) will fail from the caller's network. A single failure
+    // must not abort the loop.
+    const info = await fetch(`${httpUrl}/info`, { signal: AbortSignal.timeout(timeoutMs) })
+      .then(r => r.ok ? r.json() as Promise<{ address?: string }> : null)
+      .catch(() => null);
 
-    const info = await infoResponse.json() as { address?: string };
-    if (info.address === agentAddress) {
+    if (info?.address === agentAddress) {
       const baseUrl = httpUrl.replace(/^https?:\/\//, '');
       const protocol = httpUrl.startsWith('https') ? 'wss' : 'ws';
       return { httpUrl, wsUrl: `${protocol}://${baseUrl}/ws` };
@@ -109,25 +113,36 @@ export async function fetchAgentInfo(
 ): Promise<AgentInfo> {
   const httpsRelay = normalizeRelayUrl(relayUrl).replace(/^wss?:\/\//, 'https://');
 
-  const relayRes = await fetch(`${httpsRelay}/api/relay/agents/${agentAddress}`, {
+  // Outer lookup — fetch failures surface as "offline" rather than crashing.
+  const relayData = await fetch(`${httpsRelay}/api/relay/agents/${agentAddress}`, {
     signal: AbortSignal.timeout(5000),
-  });
-  if (!relayRes.ok) return { address: agentAddress, online: false };
+  })
+    .then(r => r.ok ? r.json() as Promise<{ endpoints?: string[] }> : null)
+    .catch(() => null);
 
-  const { endpoints = [] } = await relayRes.json() as { endpoints?: string[] };
-  const httpEndpoints = sortByProximity(endpoints.filter(ep => ep.startsWith('http')));
+  if (!relayData) return { address: agentAddress, online: false };
+
+  const httpEndpoints = sortByProximity(
+    (relayData.endpoints ?? []).filter(ep => ep.startsWith('http'))
+  );
 
   for (const httpUrl of httpEndpoints) {
-    const infoRes = await fetch(`${httpUrl}/info`, { signal: AbortSignal.timeout(3000) });
-    if (!infoRes.ok) continue;
+    // Probe each endpoint; unreachable ones yield null and we move on.
+    const info = await fetch(`${httpUrl}/info`, { signal: AbortSignal.timeout(3000) })
+      .then(r => r.ok ? r.json() as Promise<{
+        name?: string; address?: string; tools?: string[];
+        skills?: Array<{name: string; description: string; location: string}>;
+        trust?: string; version?: string;
+      }> : null)
+      .catch(() => null);
 
-    const info = await infoRes.json() as {
-      name?: string; address?: string; tools?: string[];
-      skills?: Array<{name: string; description: string; location: string}>;
-      trust?: string; version?: string;
-    };
-    if (info.address === agentAddress) {
-      return { address: agentAddress, name: info.name, tools: info.tools, skills: info.skills, trust: info.trust, version: info.version, online: true };
+    if (info?.address === agentAddress) {
+      return {
+        address: agentAddress,
+        name: info.name, tools: info.tools, skills: info.skills,
+        trust: info.trust, version: info.version,
+        online: true,
+      };
     }
   }
 

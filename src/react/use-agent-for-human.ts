@@ -206,20 +206,46 @@ export function useAgentForHuman(
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent]);
 
-  // Restore persisted session into the RemoteAgent on mount or when sessionId changes.
-  // Then auto-reconnect to sync with server (get newer data, resume executing agent, etc.)
+  // On mount (or sessionId change): wait for Zustand hydration, then restore
+  // session into the agent and reconnect to the server. Server returns:
+  //   status="running"   → resume forwarding events
+  //   status="connected" → deliver buffered OUTPUT synchronously
+  //   status="new"       → no-op (harmless)
+  // Reading state inside an early useEffect would see initial empty values
+  // because persist hydrates asynchronously after the first render.
   useEffect(() => {
-    if (session) {
-      (agent as any)._currentSession = { ...session, session_id: sessionId };
-      (agent as any)._chatItems = [...ui];
-    } else if (messages.length > 0) {
-      (agent as any)._currentSession = { session_id: sessionId, messages };
-      (agent as any)._chatItems = [...ui];
-    }
+    let cancelled = false;
 
-    // No auto-reconnect on mount. Show cached conversation from localStorage.
-    // When user sends next message, input() → _ensureConnected() → CONNECT
-    // will sync with server (session merge, server_newer, etc.).
+    const restoreAndReconnect = () => {
+      if (cancelled || !sessionId) return;
+      // If input() already opened a live connection while we were waiting for
+      // hydration, don't yank it: reconnect() would _closeWs() and discard the
+      // pending input's resolve/reject, stranding the user's prompt.
+      if (agent.status === 'working' || agent.connectionState === 'connected') return;
+      const state = useStore.getState();
+      const hasStored = state.messages.length > 0 || !!state.session;
+      if (!hasStored) return;
+
+      if (state.session) {
+        (agent as any)._currentSession = { ...state.session, session_id: sessionId };
+      } else {
+        (agent as any)._currentSession = { session_id: sessionId, messages: state.messages };
+      }
+      if (state.ui.length > 0) (agent as any)._chatItems = [...state.ui];
+
+      agent.reconnect(sessionId).catch((err) => {
+        console.warn('[useAgentForHuman] reconnect failed:', err);
+      });
+    };
+
+    const persist = (useStore as unknown as { persist?: { hasHydrated: () => boolean; onFinishHydration: (fn: () => void) => () => void } }).persist;
+    if (persist && !persist.hasHydrated()) {
+      const unsub = persist.onFinishHydration(restoreAndReconnect);
+      return () => { cancelled = true; unsub?.(); };
+    }
+    restoreAndReconnect();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
   const input = (prompt: string, options?: { images?: string[]; files?: import('../connect/types').FileAttachment[] }) => {

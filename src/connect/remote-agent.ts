@@ -78,8 +78,13 @@ export class RemoteAgent {
     const timeoutMs = options?.timeoutMs ?? 600000;
 
     this._addChatItem({ type: 'user', content: prompt, images: options?.images, files: options?.files });
-    this._addChatItem({ type: 'thinking', id: '__optimistic__', status: 'running' });
-    this._status = 'working';
+
+    const isInterjection = this._status === 'working' && this._inputResolve !== null;
+
+    if (!isInterjection) {
+      this._addChatItem({ type: 'thinking', id: '__optimistic__', status: 'running' });
+      this._status = 'working';
+    }
     this._onMessage?.();
 
     await this._ensureConnected();
@@ -93,6 +98,15 @@ export class RemoteAgent {
     if (!isDirect) msg.to = this.address;
 
     this._ws!.send(JSON.stringify(msg));
+
+    if (isInterjection) {
+      return new Promise<Response>((resolve, reject) => {
+        const prevResolve = this._inputResolve!;
+        const prevReject = this._inputReject!;
+        this._inputResolve = (r) => { prevResolve(r); resolve(r); };
+        this._inputReject = (e) => { prevReject(e); reject(e); };
+      });
+    }
 
     return new Promise<Response>((resolve, reject) => {
       this._inputResolve = resolve;
@@ -274,6 +288,11 @@ export class RemoteAgent {
 
   _addChatItem(event: Partial<ChatItem> & { type: ChatItemType }): void {
     const id = (event as { id?: string }).id || generateUUID();
+    const existingIdx = this._chatItems.findIndex(item => item.id === id);
+    if (existingIdx !== -1) {
+      this._chatItems[existingIdx] = { ...this._chatItems[existingIdx], ...event, id } as ChatItem;
+      return;
+    }
     this._chatItems.push({ ...event, id } as ChatItem);
   }
 

@@ -103,6 +103,21 @@ export interface UseAgentForHumanReturn {
 
   /** Clear all agent and store state, effectively starting a new conversation. */
   reset: () => void;
+
+  /** Pause agent execution at the next iteration boundary */
+  pause: () => void;
+
+  /** Resume a paused agent */
+  resume: () => void;
+
+  /** Stop agent execution */
+  stopExecution: () => void;
+
+  /** Send an inline message to the agent during execution */
+  sendInlineMessage: (content: string) => void;
+
+  /** Current execution state: null when idle, 'running'/'paused'/'stopped' during execution */
+  executionState: 'running' | 'paused' | 'stopped' | null;
 }
 
 /**
@@ -186,6 +201,9 @@ export function useAgentForHuman(
   // connectionState is initialized from the agent and then kept in sync via onMessage.
   const [connectionState, setConnectionState] = useState<ConnectionState>(agent.connectionState);
 
+  // Execution control state (pause/resume/stop)
+  const [executionState, setExecutionState] = useState<'running' | 'paused' | 'stopped' | null>(agent.executionState);
+
   // Register a single onMessage callback for the lifetime of this agent instance.
   // This replaces a polling interval: every streaming event from the server triggers
   // one synchronous flush of all derived state into React/Zustand.
@@ -194,6 +212,7 @@ export function useAgentForHuman(
       setUI([...agent.ui]);
       setStatus(agent.status);
       setConnectionState(agent.connectionState);
+      setExecutionState(agent.executionState);
       if (agent.error) setError(agent.error);
       if (agent.currentSession) {
         setSession(agent.currentSession);
@@ -283,6 +302,11 @@ export function useAgentForHuman(
     );
   };
 
+  const pause = () => agent.pause();
+  const resumeExecution = () => agent.resume();
+  const stopExecution = () => agent.stopExecution();
+  const sendInlineMessage = (content: string) => agent.sendInlineMessage(content);
+
   return {
     status,
     connectionState,
@@ -300,6 +324,11 @@ export function useAgentForHuman(
     setMode,
     reconnect,
     reset,
+    pause,
+    resume: resumeExecution,
+    stopExecution,
+    sendInlineMessage,
+    executionState,
   };
 }
 

@@ -30,6 +30,7 @@ export class RemoteAgent {
   _currentSession: SessionState | null = null;
   _chatItems: ChatItem[] = [];
   _error: Error | null = null;
+  _executionState: 'running' | 'paused' | 'stopped' | null = null;
 
   // Persistent WebSocket
   private _ws: WebSocketLike | null = null;
@@ -71,6 +72,7 @@ export class RemoteAgent {
   get ui(): ChatItem[] { return this._chatItems; }
   get mode(): ApprovalMode { return this._currentSession?.mode || 'safe'; }
   get error(): Error | null { return this._error || null; }
+  get executionState(): 'running' | 'paused' | 'stopped' | null { return this._executionState; }
 
   // --- Public API ---
 
@@ -180,6 +182,29 @@ export class RemoteAgent {
     }
   }
 
+  // --- Execution Control ---
+
+  pause(): void {
+    if (!this._ws) throw new Error('No active connection');
+    this._ws.send(JSON.stringify({ type: 'EXECUTION_CONTROL', action: 'pause' }));
+  }
+
+  resume(): void {
+    if (!this._ws) throw new Error('No active connection');
+    this._ws.send(JSON.stringify({ type: 'EXECUTION_CONTROL', action: 'resume' }));
+  }
+
+  stopExecution(): void {
+    if (!this._ws) throw new Error('No active connection');
+    this._ws.send(JSON.stringify({ type: 'EXECUTION_CONTROL', action: 'stop' }));
+  }
+
+  /** Send an inline message to the agent during execution (like Claude Code interjection). */
+  sendInlineMessage(content: string): void {
+    if (!this._ws) throw new Error('No active connection');
+    this._ws.send(JSON.stringify({ type: 'INLINE_MESSAGE', content }));
+  }
+
   reset(): void {
     this._closeWs();
     this._currentSession = null;
@@ -187,6 +212,7 @@ export class RemoteAgent {
     this._status = 'idle';
     this._connectionState = 'disconnected';
     this._error = null;
+    this._executionState = null;
     this._settleInput();
     this._pendingRetry = null;
   }
@@ -426,6 +452,11 @@ export class RemoteAgent {
       }
     }
 
+    // Execution control state
+    if (data?.type === 'EXECUTION_STATE') {
+      this._executionState = data.state as 'running' | 'paused' | 'stopped';
+    }
+
     // ULW turns reached
     if (data?.type === 'ulw_turns_reached') {
       this._status = 'waiting';
@@ -507,6 +538,7 @@ export class RemoteAgent {
     if (data?.type === 'OUTPUT') {
       this._clearPlaceholder();
       this._status = 'idle';
+      this._executionState = null;
 
       if (data.session) {
         this._currentSession = data.session;

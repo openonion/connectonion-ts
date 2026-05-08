@@ -213,7 +213,7 @@ WS open → CONNECT { auth, session_id? } → CONNECTED { session_id, status }
 Server decides based on session_id:
 - No session_id → `status: "new"` (fresh session)
 - session_id found running → `status: "running"` (resume, buffered events follow)
-- session_id completed → `status: "completed"`
+- session_id agent finished → `status: "connected"` (session alive, ready for next INPUT)
 - session_id not found → `status: "new"` (start fresh)
 
 ## Relay URLs

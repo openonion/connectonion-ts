@@ -78,8 +78,13 @@ export class RemoteAgent {
     const timeoutMs = options?.timeoutMs ?? 600000;
 
     this._addChatItem({ type: 'user', content: prompt, images: options?.images, files: options?.files });
-    this._addChatItem({ type: 'thinking', id: '__optimistic__', status: 'running' });
-    this._status = 'working';
+
+    const isInterjection = this._status === 'working' && this._inputResolve !== null;
+
+    if (!isInterjection) {
+      this._addChatItem({ type: 'thinking', id: '__optimistic__', status: 'running' });
+      this._status = 'working';
+    }
     this._onMessage?.();
 
     await this._ensureConnected();
@@ -93,6 +98,15 @@ export class RemoteAgent {
     if (!isDirect) msg.to = this.address;
 
     this._ws!.send(JSON.stringify(msg));
+
+    if (isInterjection) {
+      return new Promise<Response>((resolve, reject) => {
+        const prevResolve = this._inputResolve!;
+        const prevReject = this._inputReject!;
+        this._inputResolve = (r) => { prevResolve(r); resolve(r); };
+        this._inputReject = (e) => { prevReject(e); reject(e); };
+      });
+    }
 
     return new Promise<Response>((resolve, reject) => {
       this._inputResolve = resolve;
@@ -274,12 +288,35 @@ export class RemoteAgent {
 
   _addChatItem(event: Partial<ChatItem> & { type: ChatItemType }): void {
     const id = (event as { id?: string }).id || generateUUID();
+    const existingIdx = this._chatItems.findIndex(item => item.id === id);
+    if (existingIdx !== -1) {
+      this._chatItems[existingIdx] = { ...this._chatItems[existingIdx], ...event, id } as ChatItem;
+      return;
+    }
     this._chatItems.push({ ...event, id } as ChatItem);
   }
 
   _clearPlaceholder(): void {
     const idx = this._chatItems.findIndex(item => item.id === '__optimistic__');
     if (idx !== -1) this._chatItems.splice(idx, 1);
+  }
+
+  // Replace local chat items with server's canonical history, preserving any
+  // optimistic items (user prompts + thinking placeholder) the client appended
+  // after the last user message the server knows about. Naive
+  // [...userItems, ...serverNonUserItems] reorders into [user, user, agent, agent]
+  // when the client added an optimistic user before reconnecting.
+  private _mergeServerChatItems(serverItems: ChatItem[]): void {
+    const serverUserCount = serverItems.filter(i => i.type === 'user').length;
+    let seen = 0;
+    let cutoff = this._chatItems.length;
+    for (let i = 0; i < this._chatItems.length; i++) {
+      if (this._chatItems[i].type === 'user' && ++seen > serverUserCount) {
+        cutoff = i;
+        break;
+      }
+    }
+    this._chatItems = [...serverItems, ...this._chatItems.slice(cutoff)];
   }
 
   // --- Private: connection lifecycle ---
@@ -348,9 +385,7 @@ export class RemoteAgent {
       this._currentSession = connected.session as SessionState;
     }
     if (connected.server_newer && connected.chat_items && Array.isArray(connected.chat_items)) {
-      const userItems = this._chatItems.filter(item => item.type === 'user');
-      const serverNonUserItems = (connected.chat_items as ChatItem[]).filter(item => item.type !== 'user');
-      this._chatItems = [...userItems, ...serverNonUserItems];
+      this._mergeServerChatItems(connected.chat_items as ChatItem[]);
       this._onMessage?.();
     }
   }
@@ -382,11 +417,7 @@ export class RemoteAgent {
         this._currentSession = data.session as SessionState;
       }
       if (data.server_newer && data.chat_items && Array.isArray(data.chat_items)) {
-        // Server has newer chat items (e.g., agent finished while client was away)
-        // Keep user items from client, take everything else from server
-        const userItems = this._chatItems.filter(item => item.type === 'user');
-        const serverNonUserItems = (data.chat_items as ChatItem[]).filter(item => item.type !== 'user');
-        this._chatItems = [...userItems, ...serverNonUserItems];
+        this._mergeServerChatItems(data.chat_items as ChatItem[]);
       }
       const reconnectSid = data.session_id as string;
       if (reconnectSid && this._currentSession) {
@@ -513,9 +544,7 @@ export class RemoteAgent {
       }
 
       if (data.server_newer && data.chat_items && Array.isArray(data.chat_items)) {
-        const userItems = this._chatItems.filter(item => item.type === 'user');
-        const serverNonUserItems = (data.chat_items as ChatItem[]).filter(item => item.type !== 'user');
-        this._chatItems = [...userItems, ...serverNonUserItems];
+        this._mergeServerChatItems(data.chat_items as ChatItem[]);
       }
 
       const result = data.result || '';

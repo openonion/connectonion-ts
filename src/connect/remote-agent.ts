@@ -175,6 +175,26 @@ export class RemoteAgent {
   send(message: Record<string, unknown>): void {
     if (!this._ws) throw new Error('No active connection');
     this._ws.send(JSON.stringify(message));
+    if (message.type === 'ASK_USER_RESPONSE') {
+      for (let i = this._chatItems.length - 1; i >= 0; i--) {
+        const item = this._chatItems[i];
+        if (item.type === 'ask_user' && !item.answered) {
+          item.answered = true;
+          item.answer = String(message.answer || '');
+          break;
+        }
+      }
+      this._status = 'working';
+      this._onMessage?.();
+    } else if (
+      message.type === 'APPROVAL_RESPONSE' ||
+      message.type === 'PLAN_REVIEW_RESPONSE' ||
+      message.type === 'ULW_RESPONSE' ||
+      message.type === 'ONBOARD_SUBMIT'
+    ) {
+      this._status = 'working';
+      this._onMessage?.();
+    }
   }
 
   setMode(mode: ApprovalMode, options?: { turns?: number }): void {
@@ -301,6 +321,43 @@ export class RemoteAgent {
     if (idx !== -1) this._chatItems.splice(idx, 1);
   }
 
+  private _dedupeChatItems(items: ChatItem[]): ChatItem[] {
+    const result: ChatItem[] = [];
+    const seen = new Map<string, number>();
+
+    for (const rawItem of items) {
+      const item = rawItem.type === 'agent' && rawItem.images?.length
+        ? { ...rawItem, images: Array.from(new Set(rawItem.images)) } as ChatItem
+        : rawItem;
+      const key = item.type === 'agent' && item.images?.length
+        ? `agent-image:${item.images.join('|')}`
+        : item.id && item.id !== '__optimistic__'
+          ? `id:${item.id}`
+          : null;
+
+      if (key && seen.has(key)) {
+        const index = seen.get(key)!;
+        const previous = result[index];
+        if (previous.type === 'agent' && item.type === 'agent') {
+          result[index] = {
+            ...previous,
+            ...item,
+            content: item.content || previous.content,
+            images: Array.from(new Set([...(previous.images || []), ...(item.images || [])])),
+          };
+        } else {
+          result[index] = { ...previous, ...item } as ChatItem;
+        }
+        continue;
+      }
+
+      if (key) seen.set(key, result.length);
+      result.push(item);
+    }
+
+    return result;
+  }
+
   // Replace local chat items with server's canonical history, preserving any
   // optimistic items (user prompts + thinking placeholder) the client appended
   // after the last user message the server knows about. Naive
@@ -316,7 +373,7 @@ export class RemoteAgent {
         break;
       }
     }
-    this._chatItems = [...serverItems, ...this._chatItems.slice(cutoff)];
+    this._chatItems = this._dedupeChatItems([...serverItems, ...this._chatItems.slice(cutoff)]);
   }
 
   // --- Private: connection lifecycle ---
@@ -474,6 +531,7 @@ export class RemoteAgent {
     if (data?.type === 'llm_call' || data?.type === 'llm_result' ||
         data?.type === 'tool_call' || data?.type === 'tool_result' ||
         data?.type === 'thinking' || data?.type === 'assistant' ||
+        data?.type === 'agent_image' ||
         data?.type === 'intent' || data?.type === 'eval' || data?.type === 'compact' ||
         data?.type === 'tool_blocked' || data?.type === 'files_received') {
       this._clearPlaceholder();
@@ -486,7 +544,15 @@ export class RemoteAgent {
     // Interactive events
     if (data?.type === 'ask_user') {
       this._status = 'waiting';
-      this._addChatItem({ type: 'ask_user', text: data.text || '', options: data.options || [], multi_select: data.multi_select || false });
+      this._addChatItem({
+        type: 'ask_user',
+        id: data.id != null ? String(data.id) : undefined,
+        text: String(data.text || data.question || ''),
+        options: Array.isArray(data.options) ? data.options as string[] : [],
+        multi_select: Boolean(data.multi_select),
+        ...(typeof data.input_type === 'string' && { input_type: data.input_type }),
+        ...(Array.isArray(data.fields) && { fields: data.fields as import('./types').AskUserField[] }),
+      });
     }
 
     if (data?.type === 'approval_needed') {

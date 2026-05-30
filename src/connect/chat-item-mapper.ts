@@ -96,8 +96,9 @@ export function mapEventToChatItem(
     case 'agent_image': {
       const imageData = event.image as string;
       if (imageData) {
-        const lastAgent = chatItems.filter((e): e is ChatItem & { type: 'agent' } => e.type === 'agent').pop();
-        if (lastAgent) {
+        const lastItem = chatItems[chatItems.length - 1];
+        if (lastItem?.type === 'agent') {
+          const lastAgent = lastItem as ChatItem & { type: 'agent' };
           if (!lastAgent.images) lastAgent.images = [];
           lastAgent.images.push(imageData);
         } else {

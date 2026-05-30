@@ -16,12 +16,21 @@ export interface Response {
 
 export type ChatItemType = 'user' | 'agent' | 'thinking' | 'tool_call' | 'ask_user' | 'approval_needed' | 'onboard_required' | 'onboard_success' | 'intent' | 'eval' | 'compact' | 'tool_blocked' | 'ulw_turns_reached' | 'plan_review' | 'files_received';
 
+export interface AskUserField {
+  name: string;
+  label: string;
+  type?: 'text' | 'password';
+  placeholder?: string;
+  required?: boolean;
+  autocomplete?: string;
+}
+
 export type ChatItem =
   | { id: string; type: 'user'; content: string; images?: string[]; files?: FileAttachment[] }
   | { id: string; type: 'agent'; content: string; images?: string[] }
   | { id: string; type: 'thinking'; status: 'running' | 'done' | 'error'; model?: string; duration_ms?: number; content?: string; kind?: string; context_percent?: number; usage?: { input_tokens?: number; output_tokens?: number; prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; cost?: number } }
   | { id: string; type: 'tool_call'; name: string; args?: Record<string, unknown>; status: 'running' | 'done' | 'error'; result?: string; timing_ms?: number }
-  | { id: string; type: 'ask_user'; text: string; options: string[]; multi_select: boolean }
+  | { id: string; type: 'ask_user'; text: string; options: string[]; multi_select: boolean; input_type?: string; fields?: AskUserField[]; answered?: boolean; answer?: string }
   | { id: string; type: 'approval_needed'; tool: string; arguments: Record<string, unknown>; description?: string; batch_remaining?: Array<{ tool: string; arguments: string }> }
   | { id: string; type: 'onboard_required'; methods: string[]; paymentAmount?: number }
   | { id: string; type: 'onboard_success'; level: string; message: string }

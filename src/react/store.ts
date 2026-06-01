@@ -66,6 +66,48 @@ function createInitialState(): AgentState {
 
 const storeCache = new Map<string, UseBoundStore<StoreApi<AgentStore>>>();
 
+const OMITTED_DATA_URL = '[image data omitted]';
+const DATA_URL_PATTERN = /data:[^;,\s]+;base64,[A-Za-z0-9+/=]+/g;
+const MAX_PERSISTED_IMAGE_URL_LENGTH = 8192;
+
+function shouldPersistImageUrl(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    !value.startsWith('data:') &&
+    value.length <= MAX_PERSISTED_IMAGE_URL_LENGTH
+  );
+}
+
+function sanitizeForPersistence(value: unknown): unknown {
+  if (typeof value === 'string') {
+    return value.replace(DATA_URL_PATTERN, OMITTED_DATA_URL);
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map(sanitizeForPersistence)
+      .filter((item) => item !== OMITTED_DATA_URL);
+  }
+
+  if (value && typeof value === 'object') {
+    const next: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      if (key === 'images' && Array.isArray(item)) {
+        const images = item
+          .filter(shouldPersistImageUrl)
+          .map(sanitizeForPersistence)
+          .filter((image): image is string => typeof image === 'string' && image !== OMITTED_DATA_URL);
+        if (images.length) next[key] = images;
+        continue;
+      }
+      next[key] = sanitizeForPersistence(item);
+    }
+    return next;
+  }
+
+  return value;
+}
+
 function createAgentStore(address: string, sessionId: string) {
   return create<AgentStore>()(
     persist(
@@ -89,9 +131,9 @@ function createAgentStore(address: string, sessionId: string) {
         storage: createJSONStorage(() => (globalThis as any).localStorage),
         skipHydration: typeof globalThis !== 'undefined' && !(globalThis as any).localStorage,
         partialize: (state) => ({
-          messages: state.messages,
-          ui: state.ui,
-          session: state.session,
+          messages: sanitizeForPersistence(state.messages) as Message[],
+          ui: sanitizeForPersistence(state.ui) as ChatItem[],
+          session: sanitizeForPersistence(state.session) as SessionState | null,
           createdAt: state.createdAt,
           updatedAt: state.updatedAt,
         }),

@@ -302,6 +302,67 @@ describe('useAgentForHuman hook', () => {
       rerender();
       expect(result.current.sessionId).toBe('stable-session');
     });
+
+    it('keeps runtime images but omits base64 data URLs from localStorage', async () => {
+      const imageData = `data:image/png;base64,${'A'.repeat(12000)}`;
+
+      class ImageWS extends MockWebSocket {
+        override send(data: unknown): void {
+          const msg = JSON.parse(String(data));
+          if (msg.type === 'PONG') return;
+          if (msg.type === 'CONNECT') {
+            setTimeout(() => this.onmessage && this.onmessage({
+              data: JSON.stringify({ type: 'CONNECTED', session_id: 'image-session', status: 'new' }),
+            }), 0);
+            return;
+          }
+
+          setTimeout(() => {
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({ type: 'agent_image', image: imageData, id: 'img1' }),
+            });
+          }, 0);
+          setTimeout(() => {
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({
+                type: 'OUTPUT',
+                input_id: msg.input_id,
+                result: 'done',
+                session: {
+                  session_id: 'image-session',
+                  messages: [
+                    { role: 'tool', content: `Screenshot:\n${imageData}` },
+                    { role: 'assistant', content: 'done' },
+                  ],
+                },
+              }),
+            });
+          }, 5);
+        }
+      }
+
+      ActiveWS = ImageWS;
+
+      const { result } = renderHook(() =>
+        useAgentForHuman(uniqueAddr(), 'image-session')
+      );
+
+      await act(async () => {
+        result.current.input('Show image');
+        await flush();
+      });
+
+      const agentImage = result.current.ui.find(item =>
+        item.type === 'agent' && item.images?.includes(imageData)
+      );
+      expect(agentImage).toBeDefined();
+
+      const persisted = Object.values(mockStorage).join('\n');
+      expect(persisted).not.toContain(imageData);
+      expect(persisted).not.toContain('data:image/png;base64');
+      expect(persisted).toContain('[image data omitted]');
+      expect(persisted.length).toBeLessThan(5000);
+    });
   });
 });
 

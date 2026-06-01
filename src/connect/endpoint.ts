@@ -51,6 +51,123 @@ function sortByProximity(endpoints: string[]): string[] {
   });
 }
 
+type RelayProfile = {
+  name?: string;
+  alias?: string;
+  tools?: unknown;
+  skills?: unknown;
+  trust?: string;
+  version?: string;
+  model?: string;
+};
+
+type DirectAgentInfo = {
+  name?: string;
+  address?: string;
+  tools?: unknown;
+  skills?: unknown;
+  trust?: string;
+  version?: string;
+  model?: string;
+};
+
+function normalizeTools(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+
+  const tools = value
+    .map((tool) => {
+      if (typeof tool === 'string') return tool;
+      if (tool && typeof tool === 'object') {
+        const name = (tool as { name?: unknown }).name;
+        return typeof name === 'string' ? name : undefined;
+      }
+      return undefined;
+    })
+    .filter((name): name is string => Boolean(name));
+
+  return tools.length > 0 ? tools : undefined;
+}
+
+function normalizeSkills(value: unknown): AgentInfo['skills'] | undefined {
+  if (!Array.isArray(value)) return undefined;
+
+  const skills = value
+    .map((item) => {
+      if (!item || typeof item !== 'object') return undefined;
+      const skill = item as { name?: unknown; description?: unknown; location?: unknown };
+      if (typeof skill.name !== 'string' || !skill.name) return undefined;
+
+      const normalized: NonNullable<AgentInfo['skills']>[number] = {
+        name: skill.name,
+        description: typeof skill.description === 'string' ? skill.description : '',
+      };
+      if (typeof skill.location === 'string' && skill.location) {
+        normalized.location = skill.location;
+      }
+      return normalized;
+    })
+    .filter((skill): skill is NonNullable<AgentInfo['skills']>[number] => Boolean(skill));
+
+  return skills.length > 0 ? skills : undefined;
+}
+
+function profileToAgentInfo(profile?: RelayProfile | null): Partial<AgentInfo> {
+  const info: Partial<AgentInfo> = {};
+  const name = profile?.name || profile?.alias;
+  const tools = normalizeTools(profile?.tools);
+  const skills = normalizeSkills(profile?.skills);
+
+  if (name) info.name = name;
+  if (tools) info.tools = tools;
+  if (skills) info.skills = skills;
+  if (profile?.trust) info.trust = profile.trust;
+  if (profile?.version) info.version = profile.version;
+  if (profile?.model) info.model = profile.model;
+
+  return info;
+}
+
+function directInfoToAgentInfo(info: DirectAgentInfo): Partial<AgentInfo> {
+  const normalized: Partial<AgentInfo> = {};
+  const tools = normalizeTools(info.tools);
+  const skills = normalizeSkills(info.skills);
+
+  if (info.name) normalized.name = info.name;
+  if (tools) normalized.tools = tools;
+  if (skills) normalized.skills = skills;
+  if (info.trust) normalized.trust = info.trust;
+  if (info.version) normalized.version = info.version;
+  if (info.model) normalized.model = info.model;
+
+  return normalized;
+}
+
+function mergeAgentInfo(base: AgentInfo, override: Partial<AgentInfo>): AgentInfo {
+  return {
+    address: base.address,
+    name: override.name ?? base.name,
+    tools: override.tools ?? base.tools,
+    skills: override.skills ?? base.skills,
+    trust: override.trust ?? base.trust,
+    version: override.version ?? base.version,
+    model: override.model ?? base.model,
+    online: override.online ?? base.online,
+  };
+}
+
+async function fetchRelayProfile(
+  httpsRelay: string,
+  agentAddress: string,
+): Promise<Partial<AgentInfo>> {
+  const profileData = await fetch(`${httpsRelay}/api/relay/agents/${agentAddress}/profile`, {
+    signal: AbortSignal.timeout(5000),
+  })
+    .then(r => r.ok ? r.json() as Promise<{ profile?: RelayProfile | null }> : null)
+    .catch(() => null);
+
+  return profileToAgentInfo(profileData?.profile);
+}
+
 export async function resolveEndpoint(
   agentAddress: string,
   relayUrl: string,
@@ -117,10 +234,18 @@ export async function fetchAgentInfo(
   const relayData = await fetch(`${httpsRelay}/api/relay/agents/${agentAddress}`, {
     signal: AbortSignal.timeout(5000),
   })
-    .then(r => r.ok ? r.json() as Promise<{ endpoints?: string[] }> : null)
+    .then(r => r.ok ? r.json() as Promise<{ endpoints?: string[]; last_seen?: string | null }> : null)
     .catch(() => null);
 
   if (!relayData) return { address: agentAddress, online: false };
+
+  const isOnline = Boolean(relayData.last_seen) || Boolean(relayData.endpoints?.length);
+  const profileInfo = await fetchRelayProfile(httpsRelay, agentAddress);
+  const fallbackInfo: AgentInfo = {
+    address: agentAddress,
+    ...profileInfo,
+    online: isOnline,
+  };
 
   const httpEndpoints = sortByProximity(
     (relayData.endpoints ?? []).filter(ep => ep.startsWith('http'))
@@ -129,22 +254,13 @@ export async function fetchAgentInfo(
   for (const httpUrl of httpEndpoints) {
     // Probe each endpoint; unreachable ones yield null and we move on.
     const info = await fetch(`${httpUrl}/info`, { signal: AbortSignal.timeout(3000) })
-      .then(r => r.ok ? r.json() as Promise<{
-        name?: string; address?: string; tools?: string[];
-        skills?: Array<{name: string; description: string; location: string}>;
-        trust?: string; version?: string;
-      }> : null)
+      .then(r => r.ok ? r.json() as Promise<DirectAgentInfo> : null)
       .catch(() => null);
 
     if (info?.address === agentAddress) {
-      return {
-        address: agentAddress,
-        name: info.name, tools: info.tools, skills: info.skills,
-        trust: info.trust, version: info.version,
-        online: true,
-      };
+      return mergeAgentInfo(fallbackInfo, directInfoToAgentInfo(info));
     }
   }
 
-  return { address: agentAddress, online: false };
+  return fallbackInfo;
 }

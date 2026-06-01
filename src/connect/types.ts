@@ -61,7 +61,7 @@ export interface ResolvedEndpoint {
 export interface SkillInfo {
   name: string;
   description: string;
-  location: string;
+  location?: string;
 }
 
 export interface AgentInfo {
@@ -71,6 +71,7 @@ export interface AgentInfo {
   skills?: SkillInfo[];
   trust?: string;
   version?: string;
+  model?: string;
   online: boolean;
 }
 

@@ -101,9 +101,6 @@ export interface UseAgentForHumanReturn {
   /** Reconnect to existing session to receive pending output */
   reconnect: () => void;
 
-  /** Stop the active client stream without clearing the transcript. */
-  stop: () => void;
-
   /** Clear all agent and store state, effectively starting a new conversation. */
   reset: () => void;
 }
@@ -287,10 +284,6 @@ export function useAgentForHuman(
     agent.reconnect(sessionId);  // non-blocking — updates come via onMessage
   };
 
-  const stop = () => {
-    agent.stop();
-  };
-
   const reset = () => {
     agent.reset();
     resetStore();
@@ -332,7 +325,6 @@ export function useAgentForHuman(
     signOnboard: (options: { inviteCode?: string; payment?: number }) => agent.signOnboard(options),
     setMode,
     reconnect,
-    stop,
     reset,
   };
 }

@@ -227,17 +227,6 @@ export class RemoteAgent {
 
   resetConversation(): void { this.reset(); }
 
-  stop(): void {
-    this._closeWs();
-    this._clearPlaceholder();
-    this._settleRunningItemsAfterStop();
-    this._status = 'idle';
-    this._connectionState = 'disconnected';
-    this._pendingRetry = null;
-    this._settleInput();
-    this._onMessage?.();
-  }
-
   signOnboard(options: { inviteCode?: string; payment?: number }): Record<string, unknown> {
     const payload: Record<string, unknown> = { timestamp: Math.floor(Date.now() / 1000) };
     if (options.inviteCode) payload.invite_code = options.inviteCode;
@@ -330,35 +319,6 @@ export class RemoteAgent {
   _clearPlaceholder(): void {
     const idx = this._chatItems.findIndex(item => item.id === '__optimistic__');
     if (idx !== -1) this._chatItems.splice(idx, 1);
-  }
-
-  private _settleRunningItemsAfterStop(): void {
-    this._chatItems = this._chatItems.map((item): ChatItem => {
-      switch (item.type) {
-        case 'thinking':
-          return item.status === 'running'
-            ? { ...item, status: 'error', content: item.content || 'Stopped by user' }
-            : item;
-        case 'tool_call':
-          return item.status === 'running'
-            ? { ...item, status: 'error', result: item.result || 'Stopped by user' }
-            : item;
-        case 'intent':
-          return item.status === 'analyzing'
-            ? { ...item, status: 'understood', ack: item.ack || 'Stopped by user' }
-            : item;
-        case 'eval':
-          return item.status === 'evaluating'
-            ? { ...item, status: 'done', passed: false, summary: item.summary || 'Stopped by user' }
-            : item;
-        case 'compact':
-          return item.status === 'compacting'
-            ? { ...item, status: 'error', error: item.error || 'Stopped by user' }
-            : item;
-        default:
-          return item;
-      }
-    });
   }
 
   private _dedupeChatItems(items: ChatItem[]): ChatItem[] {

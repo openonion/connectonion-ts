@@ -93,10 +93,7 @@ function sanitizeForPersistence(value: unknown): unknown {
     const next: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
       if (key === 'images' && Array.isArray(item)) {
-        const images = item
-          .filter(shouldPersistImageUrl)
-          .map(sanitizeForPersistence)
-          .filter((image): image is string => typeof image === 'string' && image !== OMITTED_DATA_URL);
+        const images = item.filter(shouldPersistImageUrl);
         if (images.length) next[key] = images;
         continue;
       }

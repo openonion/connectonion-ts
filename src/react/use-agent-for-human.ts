@@ -270,7 +270,10 @@ export function useAgentForHuman(
       (agent as any)._chatItems = [...ui];
     }
 
-    agent.input(prompt, options);  // non-blocking — updates come via onMessage
+    // Non-blocking — updates come via onMessage. A failed input already
+    // surfaced through agent.error in the onMessage flush; the rejection
+    // here is the same error, caught to avoid an unhandled rejection.
+    agent.input(prompt, options).catch(() => {});
   };
 
   const reconnect = () => {

@@ -1,32 +1,4 @@
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const ts = require('typescript');
-
-function compileTsFixture(sourcePath, outputPath) {
-  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-  const source = fs.readFileSync(sourcePath, 'utf8');
-  const output = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2020,
-      esModuleInterop: true,
-    },
-  }).outputText;
-  fs.writeFileSync(outputPath, output);
-}
-
-const compiledRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'co-ts-endpoint-'));
-compileTsFixture(
-  path.join(__dirname, '../src/connect/types.ts'),
-  path.join(compiledRoot, 'connect/types.js'),
-);
-compileTsFixture(
-  path.join(__dirname, '../src/connect/endpoint.ts'),
-  path.join(compiledRoot, 'connect/endpoint.js'),
-);
-
-const { fetchAgentInfo } = require(path.join(compiledRoot, 'connect/endpoint.js'));
+import { fetchAgentInfo } from '../src/connect/endpoint';
 
 const ADDRESS = `0x${'1'.repeat(64)}`;
 
@@ -39,7 +11,7 @@ describe('fetchAgentInfo', () => {
   });
 
   it('uses relay runtime metadata when direct /info is unreachable', async () => {
-    global.fetch = jest.fn(async (input) => {
+    global.fetch = jest.fn(async (input: unknown) => {
       const url = String(input);
 
       if (url === `https://oo.openonion.ai/api/relay/agents/${ADDRESS}`) {
@@ -64,7 +36,7 @@ describe('fetchAgentInfo', () => {
       }
 
       throw new Error(`unexpected fetch: ${url}`);
-    });
+    }) as unknown as typeof fetch;
 
     const info = await fetchAgentInfo(ADDRESS);
 

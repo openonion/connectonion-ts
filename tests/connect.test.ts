@@ -511,7 +511,8 @@ describe('UI events', () => {
       type: 'agent',
       images: ['data:image/png;base64,AAA'],
     });
-    expect(agent.ui.find(e => e.type === 'agent' && e.content === 'Which login URL?')?.images).toBeUndefined();
+    const askAgentItem = agent.ui.find(e => e.type === 'agent' && e.content === 'Which login URL?');
+    expect(askAgentItem && 'images' in askAgentItem ? askAgentItem.images : undefined).toBeUndefined();
 
     agent.reset();
   });

@@ -85,9 +85,21 @@ export class RemoteAgent {
       this._addChatItem({ type: 'thinking', id: '__optimistic__', status: 'running' });
       this._status = 'working';
     }
+    this._error = null;
     this._onMessage?.();
 
-    await this._ensureConnected();
+    try {
+      await this._ensureConnected();
+    } catch (err) {
+      // Restore the status machine before rethrowing: fire-and-forget callers
+      // (useAgentForHuman) only observe state via onMessage, and without this
+      // a connection/signing failure leaves the UI stuck on 'working' forever.
+      this._error = err instanceof Error ? err : new Error(String(err));
+      this._clearPlaceholder();
+      this._status = 'idle';
+      this._onMessage?.();
+      throw err;
+    }
 
     const inputId = generateUUID();
     const isDirect = this._isDirect();
@@ -321,43 +333,6 @@ export class RemoteAgent {
     if (idx !== -1) this._chatItems.splice(idx, 1);
   }
 
-  private _dedupeChatItems(items: ChatItem[]): ChatItem[] {
-    const result: ChatItem[] = [];
-    const seen = new Map<string, number>();
-
-    for (const rawItem of items) {
-      const item = rawItem.type === 'agent' && rawItem.images?.length
-        ? { ...rawItem, images: Array.from(new Set(rawItem.images)) } as ChatItem
-        : rawItem;
-      const key = item.type === 'agent' && item.images?.length
-        ? `agent-image:${item.images.join('|')}`
-        : item.id && item.id !== '__optimistic__'
-          ? `id:${item.id}`
-          : null;
-
-      if (key && seen.has(key)) {
-        const index = seen.get(key)!;
-        const previous = result[index];
-        if (previous.type === 'agent' && item.type === 'agent') {
-          result[index] = {
-            ...previous,
-            ...item,
-            content: item.content || previous.content,
-            images: Array.from(new Set([...(previous.images || []), ...(item.images || [])])),
-          };
-        } else {
-          result[index] = { ...previous, ...item } as ChatItem;
-        }
-        continue;
-      }
-
-      if (key) seen.set(key, result.length);
-      result.push(item);
-    }
-
-    return result;
-  }
-
   // Replace local chat items with server's canonical history, preserving any
   // optimistic items (user prompts + thinking placeholder) the client appended
   // after the last user message the server knows about. Naive
@@ -373,7 +348,7 @@ export class RemoteAgent {
         break;
       }
     }
-    this._chatItems = this._dedupeChatItems([...serverItems, ...this._chatItems.slice(cutoff)]);
+    this._chatItems = [...serverItems, ...this._chatItems.slice(cutoff)];
   }
 
   // --- Private: connection lifecycle ---
@@ -629,12 +604,14 @@ export class RemoteAgent {
 
     // ERROR — reject input() promise
     if (data?.type === 'ERROR') {
+      const err = new Error(`Agent error: ${String(data.message || data.error || 'Unknown error')}`);
+      this._error = err;
       this._status = 'idle';
       this._connectionState = 'disconnected';
       this._closeWs();
       const reject = this._inputReject;
       this._settleInput();
-      reject?.(new Error(`Agent error: ${String(data.message || data.error || 'Unknown error')}`));
+      reject?.(err);
     }
 
     this._onMessage?.();

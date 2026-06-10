@@ -34,7 +34,8 @@ const mockLocalStorage = {
   removeItem: (key: string) => { delete mockStorage[key]; },
   clear: () => { Object.keys(mockStorage).forEach(k => delete mockStorage[k]); },
 };
-(globalThis as any).localStorage = mockLocalStorage;
+// jsdom exposes localStorage as an accessor; plain assignment is silently ignored
+Object.defineProperty(globalThis, 'localStorage', { value: mockLocalStorage, writable: true });
 
 // Mock WebSocket for testing
 class MockWebSocket {
@@ -52,6 +53,12 @@ class MockWebSocket {
   send(data: unknown): void {
     const msg = JSON.parse(String(data));
     if (msg.type === 'PONG') return;
+    if (msg.type === 'CONNECT') {
+      const reply = { type: 'CONNECTED', session_id: msg.session_id || 'sess-test', status: 'new' };
+      setTimeout(() => this.onmessage && this.onmessage({ data: JSON.stringify(reply) }), 0);
+      return;
+    }
+    if (msg.type !== 'INPUT') return;
     const out = {
       type: 'OUTPUT',
       input_id: msg.input_id,
@@ -118,36 +125,41 @@ describe('useAgentForHuman hook', () => {
 
   describe('initialization', () => {
     it('initializes with idle status', () => {
+      const addr = uniqueAddr();
       const { result } = renderHook(() =>
-        useAgentForHuman(uniqueAddr(), 'test-session')
+        useAgentForHuman(addr, 'test-session')
       );
       expect(result.current.status).toBe('idle');
     });
 
     it('initializes with empty UI array', () => {
+      const addr = uniqueAddr();
       const { result } = renderHook(() =>
-        useAgentForHuman(uniqueAddr(), 'test-session')
+        useAgentForHuman(addr, 'test-session')
       );
       expect(result.current.ui).toEqual([]);
     });
 
     it('initializes isProcessing as false', () => {
+      const addr = uniqueAddr();
       const { result } = renderHook(() =>
-        useAgentForHuman(uniqueAddr(), 'test-session')
+        useAgentForHuman(addr, 'test-session')
       );
       expect(result.current.isProcessing).toBe(false);
     });
 
     it('initializes error as null', () => {
+      const addr = uniqueAddr();
       const { result } = renderHook(() =>
-        useAgentForHuman(uniqueAddr(), 'test-session')
+        useAgentForHuman(addr, 'test-session')
       );
       expect(result.current.error).toBeNull();
     });
 
     it('uses provided sessionId', () => {
+      const addr = uniqueAddr();
       const { result } = renderHook(() =>
-        useAgentForHuman(uniqueAddr(), 'my-session-123')
+        useAgentForHuman(addr, 'my-session-123')
       );
       expect(result.current.sessionId).toBe('my-session-123');
     });
@@ -155,8 +167,9 @@ describe('useAgentForHuman hook', () => {
 
   describe('input method', () => {
     it('input() returns void and UI updates arrive reactively', async () => {
+      const addr = uniqueAddr();
       const { result } = renderHook(() =>
-        useAgentForHuman(uniqueAddr(), 'test-session')
+        useAgentForHuman(addr, 'test-session')
       );
 
       await act(async () => {
@@ -170,8 +183,9 @@ describe('useAgentForHuman hook', () => {
     });
 
     it('handles multiple sequential inputs', async () => {
+      const addr = uniqueAddr();
       const { result } = renderHook(() =>
-        useAgentForHuman(uniqueAddr(), 'test-session')
+        useAgentForHuman(addr, 'test-session')
       );
 
       await act(async () => {
@@ -189,8 +203,9 @@ describe('useAgentForHuman hook', () => {
     });
 
     it('sets status back to idle after completion', async () => {
+      const addr = uniqueAddr();
       const { result } = renderHook(() =>
-        useAgentForHuman(uniqueAddr(), 'test-session')
+        useAgentForHuman(addr, 'test-session')
       );
 
       await act(async () => {
@@ -205,8 +220,9 @@ describe('useAgentForHuman hook', () => {
 
   describe('reset method', () => {
     it('keeps same sessionId after reset (sessionId is a prop)', () => {
+      const addr = uniqueAddr();
       const { result } = renderHook(() =>
-        useAgentForHuman(uniqueAddr(), 'fixed-session')
+        useAgentForHuman(addr, 'fixed-session')
       );
 
       act(() => { result.current.reset(); });
@@ -215,8 +231,9 @@ describe('useAgentForHuman hook', () => {
     });
 
     it('sets status to idle', () => {
+      const addr = uniqueAddr();
       const { result } = renderHook(() =>
-        useAgentForHuman(uniqueAddr(), 'test-session')
+        useAgentForHuman(addr, 'test-session')
       );
 
       act(() => { result.current.reset(); });
@@ -225,8 +242,9 @@ describe('useAgentForHuman hook', () => {
     });
 
     it('clears error', () => {
+      const addr = uniqueAddr();
       const { result } = renderHook(() =>
-        useAgentForHuman(uniqueAddr(), 'test-session')
+        useAgentForHuman(addr, 'test-session')
       );
 
       act(() => { result.current.reset(); });
@@ -235,8 +253,9 @@ describe('useAgentForHuman hook', () => {
     });
 
     it('works - can input after reset', async () => {
+      const addr = uniqueAddr();
       const { result } = renderHook(() =>
-        useAgentForHuman(uniqueAddr(), 'test-session')
+        useAgentForHuman(addr, 'test-session')
       );
 
       await act(async () => {
@@ -271,8 +290,9 @@ describe('useAgentForHuman hook', () => {
 
       ActiveWS = ErrorWS;
 
+      const addr = uniqueAddr();
       const { result } = renderHook(() =>
-        useAgentForHuman(uniqueAddr(), 'test-session')
+        useAgentForHuman(addr, 'test-session')
       );
 
       await act(async () => {
@@ -286,8 +306,9 @@ describe('useAgentForHuman hook', () => {
 
   describe('session persistence', () => {
     it('uses provided sessionId', () => {
+      const addr = uniqueAddr();
       const { result } = renderHook(() =>
-        useAgentForHuman(uniqueAddr(), 'persist-session')
+        useAgentForHuman(addr, 'persist-session')
       );
       expect(result.current.sessionId).toBe('persist-session');
     });
@@ -343,8 +364,9 @@ describe('useAgentForHuman hook', () => {
 
       ActiveWS = ImageWS;
 
+      const addr = uniqueAddr();
       const { result } = renderHook(() =>
-        useAgentForHuman(uniqueAddr(), 'image-session')
+        useAgentForHuman(addr, 'image-session')
       );
 
       await act(async () => {

@@ -95,20 +95,25 @@ export function mapEventToChatItem(
 
     case 'agent_image': {
       const imageData = event.image as string;
-      if (imageData) {
-        const lastItem = chatItems[chatItems.length - 1];
-        if (lastItem?.type === 'agent') {
-          const lastAgent = lastItem as ChatItem & { type: 'agent' };
-          if (!lastAgent.images) lastAgent.images = [];
-          lastAgent.images.push(imageData);
-        } else {
-          addItem({
-            type: 'agent',
-            id: event.id != null ? String(event.id) : undefined,
-            content: '',
-            images: [imageData],
-          });
-        }
+      if (!imageData) break;
+      // Re-delivered events (reconnect resume) must not duplicate an image
+      // already in the transcript — the same payload is the same image.
+      const alreadyShown = chatItems.some(
+        (it) => it.type === 'agent' && it.images?.includes(imageData)
+      );
+      if (alreadyShown) break;
+      const lastItem = chatItems[chatItems.length - 1];
+      if (lastItem?.type === 'agent') {
+        const lastAgent = lastItem as ChatItem & { type: 'agent' };
+        if (!lastAgent.images) lastAgent.images = [];
+        lastAgent.images.push(imageData);
+      } else {
+        addItem({
+          type: 'agent',
+          id: event.id != null ? String(event.id) : undefined,
+          content: '',
+          images: [imageData],
+        });
       }
       break;
     }

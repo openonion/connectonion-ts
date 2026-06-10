@@ -51,9 +51,8 @@ function sortByProximity(endpoints: string[]): string[] {
   });
 }
 
-type RelayProfile = {
+type RelayMetadata = {
   name?: string;
-  alias?: string;
   tools?: unknown;
   skills?: unknown;
   trust?: string;
@@ -111,18 +110,17 @@ function normalizeSkills(value: unknown): AgentInfo['skills'] | undefined {
   return skills.length > 0 ? skills : undefined;
 }
 
-function profileToAgentInfo(profile?: RelayProfile | null): Partial<AgentInfo> {
+function metadataToAgentInfo(metadata?: RelayMetadata | null): Partial<AgentInfo> {
   const info: Partial<AgentInfo> = {};
-  const name = profile?.name || profile?.alias;
-  const tools = normalizeTools(profile?.tools);
-  const skills = normalizeSkills(profile?.skills);
+  const tools = normalizeTools(metadata?.tools);
+  const skills = normalizeSkills(metadata?.skills);
 
-  if (name) info.name = name;
+  if (metadata?.name) info.name = metadata.name;
   if (tools) info.tools = tools;
   if (skills) info.skills = skills;
-  if (profile?.trust) info.trust = profile.trust;
-  if (profile?.version) info.version = profile.version;
-  if (profile?.model) info.model = profile.model;
+  if (metadata?.trust) info.trust = metadata.trust;
+  if (metadata?.version) info.version = metadata.version;
+  if (metadata?.model) info.model = metadata.model;
 
   return info;
 }
@@ -153,19 +151,6 @@ function mergeAgentInfo(base: AgentInfo, override: Partial<AgentInfo>): AgentInf
     model: override.model ?? base.model,
     online: override.online ?? base.online,
   };
-}
-
-async function fetchRelayProfile(
-  httpsRelay: string,
-  agentAddress: string,
-): Promise<Partial<AgentInfo>> {
-  const profileData = await fetch(`${httpsRelay}/api/relay/agents/${agentAddress}/profile`, {
-    signal: AbortSignal.timeout(5000),
-  })
-    .then(r => r.ok ? r.json() as Promise<{ profile?: RelayProfile | null }> : null)
-    .catch(() => null);
-
-  return profileToAgentInfo(profileData?.profile);
 }
 
 export async function resolveEndpoint(
@@ -234,16 +219,19 @@ export async function fetchAgentInfo(
   const relayData = await fetch(`${httpsRelay}/api/relay/agents/${agentAddress}`, {
     signal: AbortSignal.timeout(5000),
   })
-    .then(r => r.ok ? r.json() as Promise<{ endpoints?: string[]; last_seen?: string | null }> : null)
+    .then(r => r.ok ? r.json() as Promise<{
+      endpoints?: string[];
+      last_seen?: string | null;
+      metadata?: RelayMetadata | null;
+    }> : null)
     .catch(() => null);
 
   if (!relayData) return { address: agentAddress, online: false };
 
   const isOnline = Boolean(relayData.last_seen) || Boolean(relayData.endpoints?.length);
-  const profileInfo = await fetchRelayProfile(httpsRelay, agentAddress);
   const fallbackInfo: AgentInfo = {
     address: agentAddress,
-    ...profileInfo,
+    ...metadataToAgentInfo(relayData.metadata),
     online: isOnline,
   };
 

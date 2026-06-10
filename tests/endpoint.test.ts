@@ -10,7 +10,7 @@ describe('fetchAgentInfo', () => {
     jest.restoreAllMocks();
   });
 
-  it('uses relay runtime metadata when direct /info is unreachable', async () => {
+  it('uses the published relay profile when direct /info is unreachable', async () => {
     global.fetch = jest.fn(async (input: unknown) => {
       const url = String(input);
 
@@ -20,8 +20,8 @@ describe('fetchAgentInfo', () => {
           json: async () => ({
             endpoints: ['http://10.0.0.2:8000'],
             last_seen: '2026-06-01T00:00:00Z',
-            metadata: {
-              name: 'agent-4-linkedin',
+            profile: {
+              alias: 'agent-4-linkedin',
               model: 'co/test-model',
               version: '0.9.4',
               tools: [{ name: 'bash' }, 'skill'],

@@ -51,7 +51,8 @@ function sortByProximity(endpoints: string[]): string[] {
   });
 }
 
-type RelayMetadata = {
+type RelayProfile = {
+  alias?: string;
   name?: string;
   tools?: unknown;
   skills?: unknown;
@@ -110,17 +111,18 @@ function normalizeSkills(value: unknown): AgentInfo['skills'] | undefined {
   return skills.length > 0 ? skills : undefined;
 }
 
-function metadataToAgentInfo(metadata?: RelayMetadata | null): Partial<AgentInfo> {
+function profileToAgentInfo(profile?: RelayProfile | null): Partial<AgentInfo> {
   const info: Partial<AgentInfo> = {};
-  const tools = normalizeTools(metadata?.tools);
-  const skills = normalizeSkills(metadata?.skills);
+  const name = profile?.name || profile?.alias;
+  const tools = normalizeTools(profile?.tools);
+  const skills = normalizeSkills(profile?.skills);
 
-  if (metadata?.name) info.name = metadata.name;
+  if (name) info.name = name;
   if (tools) info.tools = tools;
   if (skills) info.skills = skills;
-  if (metadata?.trust) info.trust = metadata.trust;
-  if (metadata?.version) info.version = metadata.version;
-  if (metadata?.model) info.model = metadata.model;
+  if (profile?.trust) info.trust = profile.trust;
+  if (profile?.version) info.version = profile.version;
+  if (profile?.model) info.model = profile.model;
 
   return info;
 }
@@ -222,7 +224,7 @@ export async function fetchAgentInfo(
     .then(r => r.ok ? r.json() as Promise<{
       endpoints?: string[];
       last_seen?: string | null;
-      metadata?: RelayMetadata | null;
+      profile?: RelayProfile | null;
     }> : null)
     .catch(() => null);
 
@@ -231,7 +233,7 @@ export async function fetchAgentInfo(
   const isOnline = Boolean(relayData.last_seen) || Boolean(relayData.endpoints?.length);
   const fallbackInfo: AgentInfo = {
     address: agentAddress,
-    ...metadataToAgentInfo(relayData.metadata),
+    ...profileToAgentInfo(relayData.profile),
     online: isOnline,
   };
 

@@ -4,6 +4,35 @@
  *   Data flow: ensureConnected() opens persistent WS + INIT auth → input() sends INPUT on existing WS → handleMessage() dispatches events → resolves on OUTPUT | input() has no wall-clock deadline (ask_user runs pend on the human); the 60s-silence ping monitor detects dead connections
  *   State/Effects: owns persistent WebSocket + mutable _chatItems + _currentSession
  *   Integration: public API consumed by connect() factory and React useAgentForHuman hook
+ *
+ * Connect process (first input() on a fresh agent):
+ *
+ *   input(prompt)
+ *     │ adds user chat item, status='working'
+ *     ▼
+ *   _ensureConnected() ── ws open ──► send CONNECT {session_id?, signed payload}
+ *     │                              30s deadline starts
+ *     │
+ *     │   ┌─────────────── host reply ────────────────┐
+ *     │   ▼                                           ▼
+ *     │ CONNECTED {session_id, status}        ONBOARD_REQUIRED (trust gate)
+ *     │   │ resolves the pending promise        │ 30s deadline CLEARED — a human
+ *     │   │                                     │ is typing an invite code now
+ *     │   │                                     ▼
+ *     │   │                              UI collects code → send ONBOARD_SUBMIT (signed)
+ *     │   │                                     │
+ *     │   │                              ONBOARD_SUCCESS, then the host finishes
+ *     │   │                              the interrupted CONNECT itself and sends
+ *     │   │                              CONNECTED ──┐ (no client retry: resending
+ *     │   ◄──────────────────────────────────────────┘  INPUT here would double-run)
+ *     ▼
+ *   send INPUT {input_id, prompt} ──► streaming events (thinking/tool_call/agent_image/
+ *   ask_user/...) mapped into _chatItems ──► OUTPUT resolves input()
+ *
+ *   Failure paths: ws error/close or 60s ping silence → _handleConnectionLoss →
+ *   rejects pending connect/input; ERROR frame → _error set, input() rejected.
+ *   reconnect(sessionId) is the same shape but sends CONNECT with the stored
+ *   session and a 60s timer — connection establishment is the only bounded wait.
  */
 import * as address from '../address';
 import {

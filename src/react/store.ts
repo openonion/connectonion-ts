@@ -67,20 +67,25 @@ function createInitialState(): AgentState {
 const storeCache = new Map<string, UseBoundStore<StoreApi<AgentStore>>>();
 
 const OMITTED_DATA_URL = '[image data omitted]';
-const DATA_URL_PATTERN = /data:[^;,\s]+;base64,[A-Za-z0-9+/=]+/g;
-const MAX_PERSISTED_IMAGE_URL_LENGTH = 8192;
 
 function shouldPersistImageUrl(value: unknown): value is string {
-  return (
-    typeof value === 'string' &&
-    !value.startsWith('data:') &&
-    value.length <= MAX_PERSISTED_IMAGE_URL_LENGTH
-  );
+  // http(s) URLs persist; base64 payloads and absurdly long URLs don't.
+  return typeof value === 'string' && !value.startsWith('data:') && value.length <= 8192;
 }
 
+// One screenshot is 100KB–1MB of base64; a few of them blow the ~5MB
+// localStorage quota and evict the whole session. Data URLs hide in two
+// shapes, each needing a different treatment:
+//   - inside strings (message content, tool results) → replace with a
+//     readable placeholder
+//   - as entries of an `images` array → drop them (a placeholder string
+//     there would render as a broken <img>)
+// The walk is recursive because server payloads nest them arbitrarily
+// (ui items, session.messages, trace entries) — a missed path is a quota
+// blowout, so we sweep everything instead of enumerating known spots.
 function sanitizeForPersistence(value: unknown): unknown {
   if (typeof value === 'string') {
-    return value.replace(DATA_URL_PATTERN, OMITTED_DATA_URL);
+    return value.replace(/data:[^;,\s]+;base64,[A-Za-z0-9+/=]+/g, OMITTED_DATA_URL);
   }
 
   if (Array.isArray(value)) {

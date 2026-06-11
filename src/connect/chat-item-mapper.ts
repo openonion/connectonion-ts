@@ -96,12 +96,20 @@ export function mapEventToChatItem(
     case 'agent_image': {
       const imageData = event.image as string;
       if (!imageData) break;
-      // Re-delivered events (reconnect resume) must not duplicate an image
-      // already in the transcript — the same payload is the same image.
-      const alreadyShown = chatItems.some(
+      // One bubble per unique image, kept at its latest mention: a re-take of
+      // an unchanged page must show up at the turn that asked for it, not be
+      // swallowed because the bytes match an old bubble. Same keep-last
+      // semantics as oo-chat's dedupeUI on the replay path.
+      const prevIndex = chatItems.findIndex(
         (it) => it.type === 'agent' && it.images?.includes(imageData)
       );
-      if (alreadyShown) break;
+      if (prevIndex !== -1) {
+        const prev = chatItems[prevIndex] as ChatItem & { type: 'agent' };
+        prev.images = prev.images!.filter((img) => img !== imageData);
+        if (!prev.content && prev.images.length === 0) {
+          chatItems.splice(prevIndex, 1);
+        }
+      }
       const lastItem = chatItems[chatItems.length - 1];
       if (lastItem?.type === 'agent') {
         const lastAgent = lastItem as ChatItem & { type: 'agent' };

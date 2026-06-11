@@ -469,6 +469,45 @@ describe('UI events', () => {
     agent.reset();
   });
 
+  it('moves a re-taken identical screenshot to the latest turn', async () => {
+    class RepeatImageWS extends MockWebSocket {
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 'test', status: 'new' })
+          }), 0);
+        } else if (msg.type === 'INPUT') {
+          // Every turn screenshots the same unchanged page: identical bytes.
+          setTimeout(() => {
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({ type: 'agent_image', image: 'data:image/png;base64,SAME', id: `img-${msg.input_id}` })
+            });
+          }, 0);
+          setTimeout(() => {
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({ type: 'OUTPUT', input_id: msg.input_id, result: 'done', session: {} })
+            });
+          }, 5);
+        }
+      }
+    }
+
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: RepeatImageWS as any });
+
+    await agent.input('screenshot please');
+    await agent.input('show me the screenshot again');
+
+    const withImage = agent.ui
+      .map((e, i) => ({ e, i }))
+      .filter(({ e }) => e.type === 'agent' && e.images?.includes('data:image/png;base64,SAME'));
+    expect(withImage).toHaveLength(1);                       // one bubble, not swallowed, not duplicated
+    const lastUserIndex = agent.ui.map(e => e.type).lastIndexOf('user');
+    expect(withImage[0].i).toBeGreaterThan(lastUserIndex);   // it sits in the latest turn
+
+    agent.reset();
+  });
+
   it('places agent_image after the current tool call instead of attaching to older agent text', async () => {
     class ToolImageWS extends MockWebSocket {
       send(data: unknown): void {

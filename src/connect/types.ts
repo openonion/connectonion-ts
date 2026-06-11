@@ -64,6 +64,12 @@ export interface SkillInfo {
   location?: string;
 }
 
+export interface AgentAcceptedInputs {
+  text?: boolean;
+  images?: boolean;
+  files?: { max_file_size_mb: number; max_files_per_request: number };
+}
+
 export interface AgentInfo {
   address: string;
   name?: string;
@@ -72,6 +78,7 @@ export interface AgentInfo {
   trust?: string;
   version?: string;
   model?: string;
+  accepted_inputs?: AgentAcceptedInputs;
   online: boolean;
 }
 

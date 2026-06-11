@@ -64,6 +64,8 @@ export {
   SessionState,
   fetchAgentInfo,
   AgentInfo,
+  AgentAcceptedInputs,
+  SkillInfo,
 } from './connect';
 export * as address from './address';
 export * as addressBrowser from './address-browser';

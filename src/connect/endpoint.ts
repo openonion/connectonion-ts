@@ -62,6 +62,7 @@ type AgentInfoSource = {
   trust?: string;
   version?: string;
   model?: string;
+  accepted_inputs?: AgentInfo['accepted_inputs'];
 };
 
 function normalizeTools(value: unknown): string[] | undefined {
@@ -117,6 +118,7 @@ function toAgentInfo(source?: AgentInfoSource | null): Partial<AgentInfo> {
   if (source?.trust) info.trust = source.trust;
   if (source?.version) info.version = source.version;
   if (source?.model) info.model = source.model;
+  if (source?.accepted_inputs) info.accepted_inputs = source.accepted_inputs;
 
   return info;
 }
@@ -189,6 +191,7 @@ export async function fetchAgentInfo(
   })
     .then(r => r.ok ? r.json() as Promise<{
       endpoints?: string[];
+      relay?: string | null;
       last_seen?: string | null;
       profile?: AgentInfoSource | null;
     }> : null)
@@ -196,7 +199,9 @@ export async function fetchAgentInfo(
 
   if (!relayData) return { address: agentAddress, online: false };
 
-  const isOnline = Boolean(relayData.last_seen) || Boolean(relayData.endpoints?.length);
+  // `relay` is non-null only while the agent holds a live announce connection.
+  // last_seen/endpoints persist in the DB forever, so they can't mean online.
+  const isOnline = Boolean(relayData.relay);
   const fallbackInfo: AgentInfo = {
     address: agentAddress,
     ...toAgentInfo(relayData.profile),

@@ -7,6 +7,8 @@ export type {
   AgentStatus,
   ConnectionState,
   AgentInfo,
+  AgentAcceptedInputs,
+  SkillInfo,
   ApprovalMode,
   OutgoingMessage,
 } from '../connect';

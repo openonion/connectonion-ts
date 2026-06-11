@@ -40,9 +40,6 @@ export class RemoteAgent {
   private _inputReject: ((reason?: unknown) => void) | null = null;
   private _inputTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Pending retry after onboard
-  private _pendingRetry: { prompt: string; inputId: string; images?: string[] } | null = null;
-
   // PING/PONG health check
   private _lastPingTime = 0;
   private _pingTimer: ReturnType<typeof setInterval> | null = null;
@@ -50,6 +47,7 @@ export class RemoteAgent {
   // Callback + promise for ensureConnected
   private _connectResolve: ((data: Record<string, unknown>) => void) | null = null;
   private _connectReject: ((reason?: unknown) => void) | null = null;
+  private _connectTimer: ReturnType<typeof setTimeout> | null = null;
 
   _onMessage: (() => void) | null = null;
   set onMessage(fn: (() => void) | null) { this._onMessage = fn; }
@@ -229,7 +227,6 @@ export class RemoteAgent {
     this._connectionState = 'disconnected';
     this._error = null;
     this._settleInput();
-    this._pendingRetry = null;
   }
 
   resetConversation(): void { this.reset(); }
@@ -388,7 +385,8 @@ export class RemoteAgent {
     const connected = await new Promise<Record<string, unknown>>((resolve, reject) => {
       this._connectResolve = resolve;
       this._connectReject = reject;
-      setTimeout(() => {
+      this._connectTimer = setTimeout(() => {
+        this._connectTimer = null;
         if (this._connectResolve) {
           this._connectResolve = null;
           this._connectReject = null;
@@ -431,6 +429,7 @@ export class RemoteAgent {
     // CONNECTED — resolve ensureConnected() promise
     if (data?.type === 'CONNECTED') {
       if (this._connectResolve) {
+        if (this._connectTimer) { clearTimeout(this._connectTimer); this._connectTimer = null; }
         const resolve = this._connectResolve;
         this._connectResolve = null;
         this._connectReject = null;
@@ -543,8 +542,11 @@ export class RemoteAgent {
 
     // Onboard flow
     if (data?.type === 'ONBOARD_REQUIRED') {
+      // The gate hands this connection to a human (invite code / payment) —
+      // stop the 30s auth deadline; CONNECTED after onboard resumes the
+      // pending connect promise, and the ping monitor still bounds dead sockets.
+      if (this._connectTimer) { clearTimeout(this._connectTimer); this._connectTimer = null; }
       this._status = 'waiting';
-      this._pendingRetry = { prompt: data.prompt || '', inputId: generateUUID() };
       this._addChatItem({
         type: 'onboard_required',
         methods: (data.methods || []) as string[],
@@ -553,21 +555,15 @@ export class RemoteAgent {
     }
 
     if (data?.type === 'ONBOARD_SUCCESS') {
+      // No retry here: the host finishes the interrupted CONNECT itself and
+      // sends CONNECTED, which resumes the original input() — it sends the
+      // INPUT exactly once. A blind resend would double-run the prompt.
+      this._status = 'working';
       this._addChatItem({
         type: 'onboard_success',
         level: data.level as string,
         message: data.message as string,
       });
-
-      if (this._pendingRetry && this._ws) {
-        this._status = 'working';
-        const retry = this._pendingRetry;
-        this._pendingRetry = null;
-        const isDirect = this._isDirect();
-        const msg: Record<string, unknown> = { type: 'INPUT', input_id: retry.inputId, prompt: retry.prompt };
-        if (!isDirect) msg.to = this.address;
-        this._ws.send(JSON.stringify(msg));
-      }
     }
 
     // OUTPUT — resolve input() promise

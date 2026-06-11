@@ -767,6 +767,52 @@ describe('relay fallback', () => {
   });
 });
 
+describe('onboard gate', () => {
+  it('sends INPUT exactly once after the host completes the gated CONNECT', async () => {
+    const sent: Array<Record<string, unknown>> = [];
+
+    class OnboardWS extends MockWebSocket {
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        sent.push(msg);
+        if (msg.type === 'CONNECT') {
+          // Stranger: the trust gate interrupts CONNECT.
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'ONBOARD_REQUIRED', methods: ['invite_code'] })
+          }), 0);
+        } else if (msg.type === 'ONBOARD_SUBMIT') {
+          // Host verifies, then finishes the interrupted CONNECT itself.
+          setTimeout(() => {
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({ type: 'ONBOARD_SUCCESS', level: 'contact', message: 'ok' })
+            });
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({ type: 'CONNECTED', session_id: 'sess-1', status: 'new' })
+            });
+          }, 0);
+        } else if (msg.type === 'INPUT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'OUTPUT', input_id: msg.input_id, result: 'done', session: { messages: [] } })
+          }), 0);
+        }
+      }
+    }
+
+    const agent = connect('0xabc', { relayUrl: 'ws://localhost:8000', wsCtor: OnboardWS as any });
+    const pending = agent.input('hello');
+
+    // Wait for the gate to fire, then submit the invite code like the UI does.
+    await new Promise(r => setTimeout(r, 20));
+    agent.send(agent.signOnboard({ inviteCode: 'BETA' }));
+
+    const result = await pending;
+    expect(result.text).toBe('done');
+    expect(sent.filter(m => m.type === 'INPUT')).toHaveLength(1);
+
+    agent.reset();
+  });
+});
+
 describe('signed requests', () => {
   it('includes signature in CONNECT when keys provided', async () => {
     const keys = address.generate();

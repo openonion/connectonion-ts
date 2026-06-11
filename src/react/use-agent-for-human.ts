@@ -270,7 +270,10 @@ export function useAgentForHuman(
       (agent as any)._chatItems = [...ui];
     }
 
-    agent.input(prompt, options);  // non-blocking — updates come via onMessage
+    // Non-blocking — updates come via onMessage. Catch rejections (auth timeout,
+    // connection loss, agent ERROR) so they surface through the error state
+    // instead of as unhandled promise rejections.
+    agent.input(prompt, options).catch((err) => setError(err instanceof Error ? err : new Error(String(err))));
   };
 
   const reconnect = () => {

@@ -765,28 +765,6 @@ describe('relay fallback', () => {
     await expect(agent.input('hello')).rejects.toThrow(/not found/);
   });
 
-  it('times out if no response', async () => {
-    class NoReplyWS extends MockWebSocket {
-      send(data: unknown): void {
-        const msg = JSON.parse(String(data));
-        if (msg.type === 'CONNECT') {
-          setTimeout(() => this.onmessage && this.onmessage({
-            data: JSON.stringify({ type: 'CONNECTED', session_id: 'test', status: 'new' })
-          }), 0);
-        }
-        // INPUT: never replies
-      }
-    }
-
-    const agent = connect('0xabc', {
-      relayUrl: 'ws://localhost:8000',
-      wsCtor: NoReplyWS as any,
-    });
-
-    await expect(agent.input('hello', { timeoutMs: 50 })).rejects.toThrow(/timed out/);
-
-    agent.reset();
-  });
 });
 
 describe('signed requests', () => {

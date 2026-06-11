@@ -317,7 +317,7 @@ export class RemoteAgent {
   }
 
   private _dedupeChatItems(items: ChatItem[]): ChatItem[] {
-    const result: ChatItem[] = [];
+    const result: (ChatItem | null)[] = [];
     const seen = new Map<string, number>();
 
     for (const rawItem of items) {
@@ -332,16 +332,25 @@ export class RemoteAgent {
 
       if (key && seen.has(key)) {
         const index = seen.get(key)!;
-        const previous = result[index];
+        const previous = result[index]!;
+        let merged: ChatItem;
         if (previous.type === 'agent' && item.type === 'agent') {
-          result[index] = {
+          merged = {
             ...previous,
             ...item,
             content: item.content || previous.content,
             images: Array.from(new Set([...(previous.images || []), ...(item.images || [])])),
           };
         } else {
-          result[index] = { ...previous, ...item } as ChatItem;
+          merged = { ...previous, ...item } as ChatItem;
+        }
+        if (key.startsWith('agent-image:')) {
+          // byte-identical screenshots across turns: keep one bubble, at its latest position
+          result[index] = null;
+          seen.set(key, result.length);
+          result.push(merged);
+        } else {
+          result[index] = merged;
         }
         continue;
       }
@@ -350,7 +359,7 @@ export class RemoteAgent {
       result.push(item);
     }
 
-    return result;
+    return result.filter((item): item is ChatItem => item !== null);
   }
 
   // Replace local chat items with server's canonical history, preserving any

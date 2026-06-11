@@ -38,7 +38,7 @@ describe('fetchAgentInfo', () => {
     jest.restoreAllMocks();
   });
 
-  it('uses relay profile metadata when direct /info is unreachable', async () => {
+  it('uses relay runtime metadata when direct /info is unreachable', async () => {
     global.fetch = jest.fn(async (input) => {
       const url = String(input);
 
@@ -48,21 +48,16 @@ describe('fetchAgentInfo', () => {
           json: async () => ({
             endpoints: ['http://10.0.0.2:8000'],
             last_seen: '2026-06-01T00:00:00Z',
-          }),
-        };
-      }
-
-      if (url === `https://oo.openonion.ai/api/relay/agents/${ADDRESS}/profile`) {
-        return {
-          ok: true,
-          json: async () => ({
-            profile: {
+            metadata: {
               name: 'agent-4-linkedin',
-              alias: 'agent-4-linkedin',
               model: 'co/test-model',
               version: '0.9.4',
               tools: [{ name: 'bash' }, 'skill'],
-              skills: [{ name: 'deploy-smoke', description: 'Smoke test skill' }],
+              skills: [{
+                name: 'deploy-smoke',
+                description: 'Smoke test skill',
+                location: '/Users/me/.co/skills/deploy-smoke/SKILL.md',
+              }],
             },
           }),
         };
@@ -77,11 +72,19 @@ describe('fetchAgentInfo', () => {
 
     const info = await fetchAgentInfo(ADDRESS);
 
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      `https://oo.openonion.ai/api/relay/agents/${ADDRESS}/profile`,
+      expect.anything(),
+    );
     expect(info).toEqual({
       address: ADDRESS,
       name: 'agent-4-linkedin',
       tools: ['bash', 'skill'],
-      skills: [{ name: 'deploy-smoke', description: 'Smoke test skill' }],
+      skills: [{
+        name: 'deploy-smoke',
+        description: 'Smoke test skill',
+        location: '/Users/me/.co/skills/deploy-smoke/SKILL.md',
+      }],
       version: '0.9.4',
       model: 'co/test-model',
       online: true,

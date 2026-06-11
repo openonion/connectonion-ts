@@ -371,7 +371,7 @@ describe('UI events', () => {
         } else if (msg.type === 'INPUT') {
           setTimeout(() => {
             this.onmessage && this.onmessage({
-              data: JSON.stringify({ type: 'ask_user', text: 'Which color?' })
+              data: JSON.stringify({ type: 'ask_user', question: 'Which color?' })
             });
           }, 0);
         }
@@ -394,6 +394,213 @@ describe('UI events', () => {
     expect((askEvents[0] as any).text).toBe('Which color?');
 
     // Clean up
+    agent.reset();
+  });
+
+  it('marks ask_user answered when a response is sent', async () => {
+    class AskUserWS extends MockWebSocket {
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 'test', status: 'new' })
+          }), 0);
+        } else if (msg.type === 'INPUT') {
+          setTimeout(() => {
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({ type: 'ask_user', question: 'Which color?' })
+            });
+          }, 0);
+        }
+      }
+    }
+
+    const agent = connect('0xabc123', {
+      relayUrl: 'ws://localhost:8000',
+      wsCtor: AskUserWS as any,
+    });
+
+    agent.input('Choose');
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    agent.send({ type: 'ASK_USER_RESPONSE', answer: 'blue' });
+
+    const askEvents = agent.ui.filter(e => e.type === 'ask_user');
+    expect((askEvents[0] as any).answered).toBe(true);
+    expect((askEvents[0] as any).answer).toBe('blue');
+    expect(agent.status).toBe('working');
+
+    agent.reset();
+  });
+
+  it('adds agent_image as an agent image', async () => {
+    class ImageWS extends MockWebSocket {
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 'test', status: 'new' })
+          }), 0);
+        } else if (msg.type === 'INPUT') {
+          setTimeout(() => {
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({ type: 'agent_image', image: 'data:image/png;base64,AAA', id: 'img1' })
+            });
+          }, 0);
+          setTimeout(() => {
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({ type: 'OUTPUT', input_id: msg.input_id, result: 'done', session: {} })
+            });
+          }, 5);
+        }
+      }
+    }
+
+    const agent = connect('0xabc123', {
+      relayUrl: 'ws://localhost:8000',
+      wsCtor: ImageWS as any,
+    });
+
+    await agent.input('Show image');
+
+    const agentEvents = agent.ui.filter(e => e.type === 'agent');
+    expect(agentEvents.some(e => e.images?.includes('data:image/png;base64,AAA'))).toBe(true);
+
+    agent.reset();
+  });
+
+  it('moves a re-taken identical screenshot to the latest turn', async () => {
+    class RepeatImageWS extends MockWebSocket {
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 'test', status: 'new' })
+          }), 0);
+        } else if (msg.type === 'INPUT') {
+          // Every turn screenshots the same unchanged page: identical bytes.
+          setTimeout(() => {
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({ type: 'agent_image', image: 'data:image/png;base64,SAME', id: `img-${msg.input_id}` })
+            });
+          }, 0);
+          setTimeout(() => {
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({ type: 'OUTPUT', input_id: msg.input_id, result: 'done', session: {} })
+            });
+          }, 5);
+        }
+      }
+    }
+
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: RepeatImageWS as any });
+
+    await agent.input('screenshot please');
+    await agent.input('show me the screenshot again');
+
+    const withImage = agent.ui
+      .map((e, i) => ({ e, i }))
+      .filter(({ e }) => e.type === 'agent' && e.images?.includes('data:image/png;base64,SAME'));
+    expect(withImage).toHaveLength(1);                       // one bubble, not swallowed, not duplicated
+    const lastUserIndex = agent.ui.map(e => e.type).lastIndexOf('user');
+    expect(withImage[0].i).toBeGreaterThan(lastUserIndex);   // it sits in the latest turn
+
+    agent.reset();
+  });
+
+  it('places agent_image after the current tool call instead of attaching to older agent text', async () => {
+    class ToolImageWS extends MockWebSocket {
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 'test', status: 'new' })
+          }), 0);
+        } else if (msg.type === 'INPUT') {
+          setTimeout(() => {
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({ type: 'assistant', id: 'a1', content: 'Which login URL?' })
+            });
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({ type: 'tool_call', id: 't1', name: 'remote_login', args: {} })
+            });
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({ type: 'agent_image', image: 'data:image/png;base64,AAA', id: 'img1' })
+            });
+          }, 0);
+          setTimeout(() => {
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({ type: 'OUTPUT', input_id: msg.input_id, result: 'done', session: {} })
+            });
+          }, 5);
+        }
+      }
+    }
+
+    const agent = connect('0xabc123', {
+      relayUrl: 'ws://localhost:8000',
+      wsCtor: ToolImageWS as any,
+    });
+
+    await agent.input('Show image');
+
+    const toolIndex = agent.ui.findIndex(e => e.type === 'tool_call' && e.name === 'remote_login');
+    expect(toolIndex).toBeGreaterThan(-1);
+    expect(agent.ui[toolIndex + 1]).toMatchObject({
+      type: 'agent',
+      images: ['data:image/png;base64,AAA'],
+    });
+    const askAgentItem = agent.ui.find(e => e.type === 'agent' && e.content === 'Which login URL?');
+    expect(askAgentItem && 'images' in askAgentItem ? askAgentItem.images : undefined).toBeUndefined();
+
+    agent.reset();
+  });
+
+  it('preserves credential ask_user fields', async () => {
+    class CredentialAskWS extends MockWebSocket {
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 'test', status: 'new' })
+          }), 0);
+        } else if (msg.type === 'INPUT') {
+          setTimeout(() => {
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({
+                type: 'ask_user',
+                question: '请输入账号密码',
+                input_type: 'credentials',
+                fields: [
+                  { name: 'username', label: '账号', type: 'text', required: true },
+                  { name: 'password', label: '密码', type: 'password', required: true },
+                ],
+              })
+            });
+          }, 0);
+        }
+      }
+    }
+
+    const agent = connect('0xabc123', {
+      relayUrl: 'ws://localhost:8000',
+      wsCtor: CredentialAskWS as any,
+    });
+
+    agent.input('Credentials');
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    const askEvent = agent.ui.find(e => e.type === 'ask_user');
+    expect(askEvent).toMatchObject({
+      type: 'ask_user',
+      text: '请输入账号密码',
+      input_type: 'credentials',
+      fields: [
+        { name: 'username', label: '账号', type: 'text', required: true },
+        { name: 'password', label: '密码', type: 'password', required: true },
+      ],
+    });
+
     agent.reset();
   });
 
@@ -597,26 +804,49 @@ describe('relay fallback', () => {
 
     await expect(agent.input('hello')).rejects.toThrow(/not found/);
   });
+});
 
-  it('times out if no response', async () => {
-    class NoReplyWS extends MockWebSocket {
+describe('onboard gate', () => {
+  it('sends INPUT exactly once after the host completes the gated CONNECT', async () => {
+    const sent: Array<Record<string, unknown>> = [];
+
+    class OnboardWS extends MockWebSocket {
       send(data: unknown): void {
         const msg = JSON.parse(String(data));
+        sent.push(msg);
         if (msg.type === 'CONNECT') {
+          // Stranger: the trust gate interrupts CONNECT.
           setTimeout(() => this.onmessage && this.onmessage({
-            data: JSON.stringify({ type: 'CONNECTED', session_id: 'test', status: 'new' })
+            data: JSON.stringify({ type: 'ONBOARD_REQUIRED', methods: ['invite_code'] })
+          }), 0);
+        } else if (msg.type === 'ONBOARD_SUBMIT') {
+          // Host verifies, then finishes the interrupted CONNECT itself.
+          setTimeout(() => {
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({ type: 'ONBOARD_SUCCESS', level: 'contact', message: 'ok' })
+            });
+            this.onmessage && this.onmessage({
+              data: JSON.stringify({ type: 'CONNECTED', session_id: 'sess-1', status: 'new' })
+            });
+          }, 0);
+        } else if (msg.type === 'INPUT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'OUTPUT', input_id: msg.input_id, result: 'done', session: { messages: [] } })
           }), 0);
         }
-        // INPUT: never replies
       }
     }
 
-    const agent = connect('0xabc', {
-      relayUrl: 'ws://localhost:8000',
-      wsCtor: NoReplyWS as any,
-    });
+    const agent = connect('0xabc', { relayUrl: 'ws://localhost:8000', wsCtor: OnboardWS as any });
+    const pending = agent.input('hello');
 
-    await expect(agent.input('hello', { timeoutMs: 50 })).rejects.toThrow(/timed out/);
+    // Wait for the gate to fire, then submit the invite code like the UI does.
+    await new Promise(r => setTimeout(r, 20));
+    agent.send(agent.signOnboard({ inviteCode: 'BETA' }));
+
+    const result = await pending;
+    expect(result.text).toBe('done');
+    expect(sent.filter(m => m.type === 'INPUT')).toHaveLength(1);
 
     agent.reset();
   });

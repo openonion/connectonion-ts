@@ -1,7 +1,7 @@
 /**
  * @llm-note
  *   Dependencies: imports from [src/connect/types] | imported by [src/connect/remote-agent.ts, src/connect/handlers.ts, src/connect/index.ts]
- *   Data flow: resolveEndpoint fetches agent endpoints from relay → verifies identity → returns {httpUrl, wsUrl}
+ *   Data flow: resolveEndpoint fetches agent endpoints from relay → verifies identity → returns {httpUrl, wsUrl} | fetchAgentInfo reads the relay record (endpoints, last_seen, published profile) and merges a successful direct /info probe over it
  *   State/Effects: HTTP fetch requests to relay/agent endpoints (timeout-bounded) | no persistent state
  *   Integration: exposes resolveEndpoint(), fetchAgentInfo(), getWebSocketCtor(), generateUUID(), normalizeRelayUrl(), DEFAULT_RELAY
  */
@@ -49,6 +49,78 @@ function sortByProximity(endpoints: string[]): string[] {
     };
     return getPriority(a) - getPriority(b);
   });
+}
+
+// Shape shared by a relay-published profile and a direct /info payload
+// (relay profiles use `alias`, direct /info echoes `address`).
+type AgentInfoSource = {
+  name?: string;
+  alias?: string;
+  address?: string;
+  tools?: unknown;
+  skills?: unknown;
+  trust?: string;
+  version?: string;
+  model?: string;
+  accepted_inputs?: AgentInfo['accepted_inputs'];
+};
+
+function normalizeTools(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+
+  const tools = value
+    .map((tool) => {
+      if (typeof tool === 'string') return tool;
+      if (tool && typeof tool === 'object') {
+        const name = (tool as { name?: unknown }).name;
+        return typeof name === 'string' ? name : undefined;
+      }
+      return undefined;
+    })
+    .filter((name): name is string => Boolean(name));
+
+  return tools.length > 0 ? tools : undefined;
+}
+
+function normalizeSkills(value: unknown): AgentInfo['skills'] | undefined {
+  if (!Array.isArray(value)) return undefined;
+
+  const skills = value
+    .map((item) => {
+      if (!item || typeof item !== 'object') return undefined;
+      const skill = item as { name?: unknown; description?: unknown; location?: unknown };
+      if (typeof skill.name !== 'string' || !skill.name) return undefined;
+
+      const normalized: NonNullable<AgentInfo['skills']>[number] = {
+        name: skill.name,
+        description: typeof skill.description === 'string' ? skill.description : '',
+      };
+      if (typeof skill.location === 'string' && skill.location) {
+        normalized.location = skill.location;
+      }
+      return normalized;
+    })
+    .filter((skill): skill is NonNullable<AgentInfo['skills']>[number] => Boolean(skill));
+
+  return skills.length > 0 ? skills : undefined;
+}
+
+// Only present keys are set, so spreading the result merges cleanly over a base.
+function toAgentInfo(source?: AgentInfoSource | null): Partial<AgentInfo> {
+  const info: Partial<AgentInfo> = {};
+  const name = source?.name || source?.alias;
+  const tools = normalizeTools(source?.tools);
+  const skills = normalizeSkills(source?.skills);
+
+  if (name) info.name = name;
+  if (tools) info.tools = tools;
+  if (skills) info.skills = skills;
+  if (source?.trust) info.trust = source.trust;
+  if (source?.version) info.version = source.version;
+  if (source?.model) info.model = source.model;
+  if (source?.accepted_inputs) info.accepted_inputs = source.accepted_inputs;
+
+  return info;
 }
 
 export async function resolveEndpoint(
@@ -117,10 +189,24 @@ export async function fetchAgentInfo(
   const relayData = await fetch(`${httpsRelay}/api/relay/agents/${agentAddress}`, {
     signal: AbortSignal.timeout(5000),
   })
-    .then(r => r.ok ? r.json() as Promise<{ endpoints?: string[] }> : null)
+    .then(r => r.ok ? r.json() as Promise<{
+      endpoints?: string[];
+      relay?: string | null;
+      last_seen?: string | null;
+      profile?: AgentInfoSource | null;
+    }> : null)
     .catch(() => null);
 
   if (!relayData) return { address: agentAddress, online: false };
+
+  // `relay` is non-null only while the agent holds a live announce connection.
+  // last_seen/endpoints persist in the DB forever, so they can't mean online.
+  const isOnline = Boolean(relayData.relay);
+  const fallbackInfo: AgentInfo = {
+    address: agentAddress,
+    ...toAgentInfo(relayData.profile),
+    online: isOnline,
+  };
 
   const httpEndpoints = sortByProximity(
     (relayData.endpoints ?? []).filter(ep => ep.startsWith('http'))
@@ -129,22 +215,13 @@ export async function fetchAgentInfo(
   for (const httpUrl of httpEndpoints) {
     // Probe each endpoint; unreachable ones yield null and we move on.
     const info = await fetch(`${httpUrl}/info`, { signal: AbortSignal.timeout(3000) })
-      .then(r => r.ok ? r.json() as Promise<{
-        name?: string; address?: string; tools?: string[];
-        skills?: Array<{name: string; description: string; location: string}>;
-        trust?: string; version?: string;
-      }> : null)
+      .then(r => r.ok ? r.json() as Promise<AgentInfoSource> : null)
       .catch(() => null);
 
     if (info?.address === agentAddress) {
-      return {
-        address: agentAddress,
-        name: info.name, tools: info.tools, skills: info.skills,
-        trust: info.trust, version: info.version,
-        online: true,
-      };
+      return { ...fallbackInfo, ...toAgentInfo(info), online: true };
     }
   }
 
-  return { address: agentAddress, online: false };
+  return fallbackInfo;
 }

@@ -1,3 +1,10 @@
+/**
+ * @llm-note
+ *   Dependencies: imports from [react, src/connect (connect, RemoteAgent), src/react/store] | imported by [src/react/index.ts]
+ *   Data flow: hook owns one RemoteAgent per address:sessionId → agent.onMessage flushes ui/status/session/error into the zustand store → React re-renders from the store
+ *   State/Effects: caches the agent in a ref across renders | persists session via the store | input() is fire-and-forget (errors surface via agent.error in the flush)
+ *   Integration: exposes useAgentForHuman(address, options) returning {ui, status, input, reconnect, send, reset, ...}
+ */
 import { useEffect, useRef, useState } from 'react';
 import {
   connect,
@@ -270,7 +277,10 @@ export function useAgentForHuman(
       (agent as any)._chatItems = [...ui];
     }
 
-    agent.input(prompt, options);  // non-blocking — updates come via onMessage
+    // Non-blocking — updates come via onMessage. A failed input already
+    // surfaced through agent.error in the onMessage flush; the rejection
+    // here is the same error, caught to avoid an unhandled rejection.
+    agent.input(prompt, options).catch(() => {});
   };
 
   const reconnect = () => {

@@ -1,9 +1,38 @@
 /**
  * @llm-note
  *   Dependencies: imports from [src/connect/types, src/connect/endpoint, src/connect/auth, src/connect/chat-item-mapper, src/address]
- *   Data flow: ensureConnected() opens persistent WS + INIT auth → input() sends INPUT on existing WS → handleMessage() dispatches events → resolves on OUTPUT
+ *   Data flow: ensureConnected() opens persistent WS + INIT auth → input() sends INPUT on existing WS → handleMessage() dispatches events → resolves on OUTPUT | input() has no wall-clock deadline (ask_user runs pend on the human); the 60s-silence ping monitor detects dead connections
  *   State/Effects: owns persistent WebSocket + mutable _chatItems + _currentSession
  *   Integration: public API consumed by connect() factory and React useAgentForHuman hook
+ *
+ * Connect process (first input() on a fresh agent):
+ *
+ *   input(prompt)
+ *     │ adds user chat item, status='working'
+ *     ▼
+ *   _ensureConnected() ── ws open ──► send CONNECT {session_id?, signed payload}
+ *     │                              30s deadline starts
+ *     │
+ *     │   ┌─────────────── host reply ────────────────┐
+ *     │   ▼                                           ▼
+ *     │ CONNECTED {session_id, status}        ONBOARD_REQUIRED (trust gate)
+ *     │   │ resolves the pending promise        │ 30s deadline CLEARED — a human
+ *     │   │                                     │ is typing an invite code now
+ *     │   │                                     ▼
+ *     │   │                              UI collects code → send ONBOARD_SUBMIT (signed)
+ *     │   │                                     │
+ *     │   │                              ONBOARD_SUCCESS, then the host finishes
+ *     │   │                              the interrupted CONNECT itself and sends
+ *     │   │                              CONNECTED ──┐ (no client retry: resending
+ *     │   ◄──────────────────────────────────────────┘  INPUT here would double-run)
+ *     ▼
+ *   send INPUT {input_id, prompt} ──► streaming events (thinking/tool_call/agent_image/
+ *   ask_user/...) mapped into _chatItems ──► OUTPUT resolves input()
+ *
+ *   Failure paths: ws error/close or 60s ping silence → _handleConnectionLoss →
+ *   rejects pending connect/input; ERROR frame → _error set, input() rejected.
+ *   reconnect(sessionId) is the same shape but sends CONNECT with the stored
+ *   session and a 60s timer — connection establishment is the only bounded wait.
  */
 import * as address from '../address';
 import {
@@ -40,9 +69,6 @@ export class RemoteAgent {
   private _inputReject: ((reason?: unknown) => void) | null = null;
   private _inputTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Pending retry after onboard
-  private _pendingRetry: { prompt: string; inputId: string; images?: string[] } | null = null;
-
   // PING/PONG health check
   private _lastPingTime = 0;
   private _pingTimer: ReturnType<typeof setInterval> | null = null;
@@ -50,6 +76,7 @@ export class RemoteAgent {
   // Callback + promise for ensureConnected
   private _connectResolve: ((data: Record<string, unknown>) => void) | null = null;
   private _connectReject: ((reason?: unknown) => void) | null = null;
+  private _connectTimer: ReturnType<typeof setTimeout> | null = null;
 
   _onMessage: (() => void) | null = null;
   set onMessage(fn: (() => void) | null) { this._onMessage = fn; }
@@ -74,9 +101,7 @@ export class RemoteAgent {
 
   // --- Public API ---
 
-  async input(prompt: string, options?: { images?: string[]; files?: import('./types').FileAttachment[]; timeoutMs?: number }): Promise<Response> {
-    const timeoutMs = options?.timeoutMs ?? 600000;
-
+  async input(prompt: string, options?: { images?: string[]; files?: import('./types').FileAttachment[] }): Promise<Response> {
     this._addChatItem({ type: 'user', content: prompt, images: options?.images, files: options?.files });
 
     const isInterjection = this._status === 'working' && this._inputResolve !== null;
@@ -85,9 +110,21 @@ export class RemoteAgent {
       this._addChatItem({ type: 'thinking', id: '__optimistic__', status: 'running' });
       this._status = 'working';
     }
+    this._error = null;
     this._onMessage?.();
 
-    await this._ensureConnected();
+    try {
+      await this._ensureConnected();
+    } catch (err) {
+      // Restore the status machine before rethrowing: fire-and-forget callers
+      // (useAgentForHuman) only observe state via onMessage, and without this
+      // a connection/signing failure leaves the UI stuck on 'working' forever.
+      this._error = err instanceof Error ? err : new Error(String(err));
+      this._clearPlaceholder();
+      this._status = 'idle';
+      this._onMessage?.();
+      throw err;
+    }
 
     const inputId = generateUUID();
     const isDirect = this._isDirect();
@@ -108,15 +145,12 @@ export class RemoteAgent {
       });
     }
 
+    // No overall deadline: interactive runs legitimately pend for as long as
+    // ask_user waits on the human. Dead connections are detected by the ping
+    // monitor (60s silence -> close -> _handleConnectionLoss rejects).
     return new Promise<Response>((resolve, reject) => {
       this._inputResolve = resolve;
       this._inputReject = reject;
-      this._inputTimer = setTimeout(() => {
-        this._settleInput();
-        this._status = 'idle';
-        this._onMessage?.();
-        reject(new Error('Request timed out'));
-      }, timeoutMs);
     });
   }
 
@@ -175,6 +209,26 @@ export class RemoteAgent {
   send(message: Record<string, unknown>): void {
     if (!this._ws) throw new Error('No active connection');
     this._ws.send(JSON.stringify(message));
+    if (message.type === 'ASK_USER_RESPONSE') {
+      for (let i = this._chatItems.length - 1; i >= 0; i--) {
+        const item = this._chatItems[i];
+        if (item.type === 'ask_user' && !item.answered) {
+          item.answered = true;
+          item.answer = String(message.answer || '');
+          break;
+        }
+      }
+      this._status = 'working';
+      this._onMessage?.();
+    } else if (
+      message.type === 'APPROVAL_RESPONSE' ||
+      message.type === 'PLAN_REVIEW_RESPONSE' ||
+      message.type === 'ULW_RESPONSE' ||
+      message.type === 'ONBOARD_SUBMIT'
+    ) {
+      this._status = 'working';
+      this._onMessage?.();
+    }
   }
 
   setMode(mode: ApprovalMode, options?: { turns?: number }): void {
@@ -202,7 +256,6 @@ export class RemoteAgent {
     this._connectionState = 'disconnected';
     this._error = null;
     this._settleInput();
-    this._pendingRetry = null;
   }
 
   resetConversation(): void { this.reset(); }
@@ -361,7 +414,8 @@ export class RemoteAgent {
     const connected = await new Promise<Record<string, unknown>>((resolve, reject) => {
       this._connectResolve = resolve;
       this._connectReject = reject;
-      setTimeout(() => {
+      this._connectTimer = setTimeout(() => {
+        this._connectTimer = null;
         if (this._connectResolve) {
           this._connectResolve = null;
           this._connectReject = null;
@@ -404,6 +458,7 @@ export class RemoteAgent {
     // CONNECTED — resolve ensureConnected() promise
     if (data?.type === 'CONNECTED') {
       if (this._connectResolve) {
+        if (this._connectTimer) { clearTimeout(this._connectTimer); this._connectTimer = null; }
         const resolve = this._connectResolve;
         this._connectResolve = null;
         this._connectReject = null;
@@ -474,6 +529,7 @@ export class RemoteAgent {
     if (data?.type === 'llm_call' || data?.type === 'llm_result' ||
         data?.type === 'tool_call' || data?.type === 'tool_result' ||
         data?.type === 'thinking' || data?.type === 'assistant' ||
+        data?.type === 'agent_image' ||
         data?.type === 'intent' || data?.type === 'eval' || data?.type === 'compact' ||
         data?.type === 'tool_blocked' || data?.type === 'files_received') {
       this._clearPlaceholder();
@@ -486,7 +542,15 @@ export class RemoteAgent {
     // Interactive events
     if (data?.type === 'ask_user') {
       this._status = 'waiting';
-      this._addChatItem({ type: 'ask_user', text: data.text || '', options: data.options || [], multi_select: data.multi_select || false });
+      this._addChatItem({
+        type: 'ask_user',
+        id: data.id != null ? String(data.id) : undefined,
+        text: String(data.text || data.question || ''),
+        options: Array.isArray(data.options) ? data.options as string[] : [],
+        multi_select: Boolean(data.multi_select),
+        ...(typeof data.input_type === 'string' && { input_type: data.input_type }),
+        ...(Array.isArray(data.fields) && { fields: data.fields as import('./types').AskUserField[] }),
+      });
     }
 
     if (data?.type === 'approval_needed') {
@@ -507,8 +571,11 @@ export class RemoteAgent {
 
     // Onboard flow
     if (data?.type === 'ONBOARD_REQUIRED') {
+      // The gate hands this connection to a human (invite code / payment) —
+      // stop the 30s auth deadline; CONNECTED after onboard resumes the
+      // pending connect promise, and the ping monitor still bounds dead sockets.
+      if (this._connectTimer) { clearTimeout(this._connectTimer); this._connectTimer = null; }
       this._status = 'waiting';
-      this._pendingRetry = { prompt: data.prompt || '', inputId: generateUUID() };
       this._addChatItem({
         type: 'onboard_required',
         methods: (data.methods || []) as string[],
@@ -517,21 +584,15 @@ export class RemoteAgent {
     }
 
     if (data?.type === 'ONBOARD_SUCCESS') {
+      // No retry here: the host finishes the interrupted CONNECT itself and
+      // sends CONNECTED, which resumes the original input() — it sends the
+      // INPUT exactly once. A blind resend would double-run the prompt.
+      this._status = 'working';
       this._addChatItem({
         type: 'onboard_success',
         level: data.level as string,
         message: data.message as string,
       });
-
-      if (this._pendingRetry && this._ws) {
-        this._status = 'working';
-        const retry = this._pendingRetry;
-        this._pendingRetry = null;
-        const isDirect = this._isDirect();
-        const msg: Record<string, unknown> = { type: 'INPUT', input_id: retry.inputId, prompt: retry.prompt };
-        if (!isDirect) msg.to = this.address;
-        this._ws.send(JSON.stringify(msg));
-      }
     }
 
     // OUTPUT — resolve input() promise
@@ -563,12 +624,14 @@ export class RemoteAgent {
 
     // ERROR — reject input() promise
     if (data?.type === 'ERROR') {
+      const err = new Error(`Agent error: ${String(data.message || data.error || 'Unknown error')}`);
+      this._error = err;
       this._status = 'idle';
       this._connectionState = 'disconnected';
       this._closeWs();
       const reject = this._inputReject;
       this._settleInput();
-      reject?.(new Error(`Agent error: ${String(data.message || data.error || 'Unknown error')}`));
+      reject?.(err);
     }
 
     this._onMessage?.();

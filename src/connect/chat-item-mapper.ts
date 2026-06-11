@@ -1,7 +1,7 @@
 /**
  * @llm-note
  *   Dependencies: imports from [src/connect/types] | imported by [src/connect/handlers.ts]
- *   Data flow: pure function — maps server event → ChatItem mutations on the chatItems array
+ *   Data flow: pure function — maps server event → ChatItem mutations on the chatItems array | agent_image payloads already present in the transcript are skipped (reconnect re-delivery must not duplicate images)
  *   State/Effects: mutates chatItems array in-place (push via addItem, update existing entries)
  *   Integration: called by handlers.ts for stream event types (tool_call, llm_call, etc.)
  */
@@ -95,19 +95,33 @@ export function mapEventToChatItem(
 
     case 'agent_image': {
       const imageData = event.image as string;
-      if (imageData) {
-        const lastAgent = chatItems.filter((e): e is ChatItem & { type: 'agent' } => e.type === 'agent').pop();
-        if (lastAgent) {
-          if (!lastAgent.images) lastAgent.images = [];
-          lastAgent.images.push(imageData);
-        } else {
-          addItem({
-            type: 'agent',
-            id: event.id != null ? String(event.id) : undefined,
-            content: '',
-            images: [imageData],
-          });
+      if (!imageData) break;
+      // One bubble per unique image, kept at its latest mention: a re-take of
+      // an unchanged page must show up at the turn that asked for it, not be
+      // swallowed because the bytes match an old bubble. Same keep-last
+      // semantics as oo-chat's dedupeUI on the replay path.
+      const prevIndex = chatItems.findIndex(
+        (it) => it.type === 'agent' && it.images?.includes(imageData)
+      );
+      if (prevIndex !== -1) {
+        const prev = chatItems[prevIndex] as ChatItem & { type: 'agent' };
+        prev.images = prev.images!.filter((img) => img !== imageData);
+        if (!prev.content && prev.images.length === 0) {
+          chatItems.splice(prevIndex, 1);
         }
+      }
+      const lastItem = chatItems[chatItems.length - 1];
+      if (lastItem?.type === 'agent') {
+        const lastAgent = lastItem as ChatItem & { type: 'agent' };
+        if (!lastAgent.images) lastAgent.images = [];
+        lastAgent.images.push(imageData);
+      } else {
+        addItem({
+          type: 'agent',
+          id: event.id != null ? String(event.id) : undefined,
+          content: '',
+          images: [imageData],
+        });
       }
       break;
     }

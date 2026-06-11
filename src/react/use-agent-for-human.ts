@@ -1,3 +1,10 @@
+/**
+ * @llm-note
+ *   Dependencies: imports from [react, src/connect (connect, RemoteAgent), src/react/store] | imported by [src/react/index.ts]
+ *   Data flow: hook owns one RemoteAgent per address:sessionId → agent.onMessage flushes ui/status/session/error into the zustand store → React re-renders from the store
+ *   State/Effects: caches the agent in a ref across renders | persists session via the store | input() is fire-and-forget (errors surface via agent.error in the flush)
+ *   Integration: exposes useAgentForHuman(address, options) returning {ui, status, input, reconnect, send, reset, ...}
+ */
 import { useEffect, useRef, useState } from 'react';
 import {
   connect,

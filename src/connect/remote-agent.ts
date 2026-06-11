@@ -1,7 +1,7 @@
 /**
  * @llm-note
  *   Dependencies: imports from [src/connect/types, src/connect/endpoint, src/connect/auth, src/connect/chat-item-mapper, src/address]
- *   Data flow: ensureConnected() opens persistent WS + INIT auth → input() sends INPUT on existing WS → handleMessage() dispatches events → resolves on OUTPUT
+ *   Data flow: ensureConnected() opens persistent WS + INIT auth → input() sends INPUT on existing WS → handleMessage() dispatches events → resolves on OUTPUT | input() has no wall-clock deadline (ask_user runs pend on the human); the 60s-silence ping monitor detects dead connections
  *   State/Effects: owns persistent WebSocket + mutable _chatItems + _currentSession
  *   Integration: public API consumed by connect() factory and React useAgentForHuman hook
  */
@@ -74,9 +74,7 @@ export class RemoteAgent {
 
   // --- Public API ---
 
-  async input(prompt: string, options?: { images?: string[]; files?: import('./types').FileAttachment[]; timeoutMs?: number }): Promise<Response> {
-    const timeoutMs = options?.timeoutMs ?? 600000;
-
+  async input(prompt: string, options?: { images?: string[]; files?: import('./types').FileAttachment[] }): Promise<Response> {
     this._addChatItem({ type: 'user', content: prompt, images: options?.images, files: options?.files });
 
     const isInterjection = this._status === 'working' && this._inputResolve !== null;
@@ -120,15 +118,12 @@ export class RemoteAgent {
       });
     }
 
+    // No overall deadline: interactive runs legitimately pend for as long as
+    // ask_user waits on the human. Dead connections are detected by the ping
+    // monitor (60s silence -> close -> _handleConnectionLoss rejects).
     return new Promise<Response>((resolve, reject) => {
       this._inputResolve = resolve;
       this._inputReject = reject;
-      this._inputTimer = setTimeout(() => {
-        this._settleInput();
-        this._status = 'idle';
-        this._onMessage?.();
-        reject(new Error('Request timed out'));
-      }, timeoutMs);
     });
   }
 

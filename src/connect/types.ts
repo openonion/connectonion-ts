@@ -3,7 +3,7 @@
  *   Dependencies: imports from [src/address (type-only)] | imported by [all connect/ files, src/react/]
  *   Data flow: defines interfaces used by RemoteAgent for WebSocket message parsing → ChatItem union rendered by UI consumers → SessionState synced between client/server
  *   State/Effects: pure type definitions, no runtime logic or side effects
- *   Integration: exports Response, ChatItem (14-variant union), ChatItemType, WebSocketLike, WebSocketCtor, ResolvedEndpoint, AgentInfo, ConnectOptions, SessionState, ApprovalMode, AgentStatus, ConnectionState
+ *   Integration: exports Response, ChatItem (14-variant union), ChatItemType, AskUserField (structured ask_user forms, e.g. login credentials), WebSocketLike, WebSocketCtor, ResolvedEndpoint, AgentInfo, ConnectOptions, SessionState, ApprovalMode, AgentStatus, ConnectionState
  */
 import type * as address from '../address';
 

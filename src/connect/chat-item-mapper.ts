@@ -1,7 +1,7 @@
 /**
  * @llm-note
  *   Dependencies: imports from [src/connect/types] | imported by [src/connect/handlers.ts]
- *   Data flow: pure function — maps server event → ChatItem mutations on the chatItems array
+ *   Data flow: pure function — maps server event → ChatItem mutations on the chatItems array | agent_image payloads already present in the transcript are skipped (reconnect re-delivery must not duplicate images)
  *   State/Effects: mutates chatItems array in-place (push via addItem, update existing entries)
  *   Integration: called by handlers.ts for stream event types (tool_call, llm_call, etc.)
  */

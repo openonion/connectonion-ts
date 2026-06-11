@@ -3,7 +3,7 @@
  * @llm-note
  *   Dependencies: imports from [zustand, zustand/middleware, src/connect/types (ChatItem, AgentStatus, SessionState)] | imported by [src/react/index.ts]
  *   Data flow: getStore(address, sessionId) → creates or retrieves cached zustand store → persisted to localStorage as co:agent:{address}:session:{sessionId}
- *   State/Effects: storeCache (module-level Map) prevents duplicate stores | each store persists messages, ui, session, timestamps to localStorage via zustand/persist
+ *   State/Effects: storeCache (module-level Map) prevents duplicate stores | each store persists messages, ui, session, timestamps to localStorage via zustand/persist | persisted state is sanitized: base64 data URLs are stripped (screenshots would blow the ~5MB localStorage quota); live images survive in memory and replays re-fetch from the server
  *   Integration: exposes getStore(), Message, AgentState, AgentActions, AgentStore types
  *   Performance: storeCache is singleton Map — O(1) lookup per address:sessionId pair | partialize() limits persisted state size
  */

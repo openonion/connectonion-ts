@@ -1,7 +1,7 @@
 /**
  * @llm-note
  *   Dependencies: imports from [src/connect/types] | imported by [src/connect/remote-agent.ts, src/connect/handlers.ts, src/connect/index.ts]
- *   Data flow: resolveEndpoint fetches agent endpoints from relay → verifies identity → returns {httpUrl, wsUrl}
+ *   Data flow: resolveEndpoint fetches agent endpoints from relay → verifies identity → returns {httpUrl, wsUrl} | fetchAgentInfo reads the relay record (endpoints, last_seen, published profile) and merges a successful direct /info probe over it
  *   State/Effects: HTTP fetch requests to relay/agent endpoints (timeout-bounded) | no persistent state
  *   Integration: exposes resolveEndpoint(), fetchAgentInfo(), getWebSocketCtor(), generateUUID(), normalizeRelayUrl(), DEFAULT_RELAY
  */
@@ -51,18 +51,11 @@ function sortByProximity(endpoints: string[]): string[] {
   });
 }
 
-type RelayProfile = {
+// Shape shared by a relay-published profile and a direct /info payload
+// (relay profiles use `alias`, direct /info echoes `address`).
+type AgentInfoSource = {
+  name?: string;
   alias?: string;
-  name?: string;
-  tools?: unknown;
-  skills?: unknown;
-  trust?: string;
-  version?: string;
-  model?: string;
-};
-
-type DirectAgentInfo = {
-  name?: string;
   address?: string;
   tools?: unknown;
   skills?: unknown;
@@ -111,48 +104,21 @@ function normalizeSkills(value: unknown): AgentInfo['skills'] | undefined {
   return skills.length > 0 ? skills : undefined;
 }
 
-function profileToAgentInfo(profile?: RelayProfile | null): Partial<AgentInfo> {
+// Only present keys are set, so spreading the result merges cleanly over a base.
+function toAgentInfo(source?: AgentInfoSource | null): Partial<AgentInfo> {
   const info: Partial<AgentInfo> = {};
-  const name = profile?.name || profile?.alias;
-  const tools = normalizeTools(profile?.tools);
-  const skills = normalizeSkills(profile?.skills);
+  const name = source?.name || source?.alias;
+  const tools = normalizeTools(source?.tools);
+  const skills = normalizeSkills(source?.skills);
 
   if (name) info.name = name;
   if (tools) info.tools = tools;
   if (skills) info.skills = skills;
-  if (profile?.trust) info.trust = profile.trust;
-  if (profile?.version) info.version = profile.version;
-  if (profile?.model) info.model = profile.model;
+  if (source?.trust) info.trust = source.trust;
+  if (source?.version) info.version = source.version;
+  if (source?.model) info.model = source.model;
 
   return info;
-}
-
-function directInfoToAgentInfo(info: DirectAgentInfo): Partial<AgentInfo> {
-  const normalized: Partial<AgentInfo> = {};
-  const tools = normalizeTools(info.tools);
-  const skills = normalizeSkills(info.skills);
-
-  if (info.name) normalized.name = info.name;
-  if (tools) normalized.tools = tools;
-  if (skills) normalized.skills = skills;
-  if (info.trust) normalized.trust = info.trust;
-  if (info.version) normalized.version = info.version;
-  if (info.model) normalized.model = info.model;
-
-  return normalized;
-}
-
-function mergeAgentInfo(base: AgentInfo, override: Partial<AgentInfo>): AgentInfo {
-  return {
-    address: base.address,
-    name: override.name ?? base.name,
-    tools: override.tools ?? base.tools,
-    skills: override.skills ?? base.skills,
-    trust: override.trust ?? base.trust,
-    version: override.version ?? base.version,
-    model: override.model ?? base.model,
-    online: override.online ?? base.online,
-  };
 }
 
 export async function resolveEndpoint(
@@ -224,7 +190,7 @@ export async function fetchAgentInfo(
     .then(r => r.ok ? r.json() as Promise<{
       endpoints?: string[];
       last_seen?: string | null;
-      profile?: RelayProfile | null;
+      profile?: AgentInfoSource | null;
     }> : null)
     .catch(() => null);
 
@@ -233,7 +199,7 @@ export async function fetchAgentInfo(
   const isOnline = Boolean(relayData.last_seen) || Boolean(relayData.endpoints?.length);
   const fallbackInfo: AgentInfo = {
     address: agentAddress,
-    ...profileToAgentInfo(relayData.profile),
+    ...toAgentInfo(relayData.profile),
     online: isOnline,
   };
 
@@ -244,11 +210,11 @@ export async function fetchAgentInfo(
   for (const httpUrl of httpEndpoints) {
     // Probe each endpoint; unreachable ones yield null and we move on.
     const info = await fetch(`${httpUrl}/info`, { signal: AbortSignal.timeout(3000) })
-      .then(r => r.ok ? r.json() as Promise<DirectAgentInfo> : null)
+      .then(r => r.ok ? r.json() as Promise<AgentInfoSource> : null)
       .catch(() => null);
 
     if (info?.address === agentAddress) {
-      return mergeAgentInfo(fallbackInfo, directInfoToAgentInfo(info));
+      return { ...fallbackInfo, ...toAgentInfo(info), online: true };
     }
   }
 

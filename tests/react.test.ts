@@ -304,6 +304,25 @@ describe('useAgentForHuman hook', () => {
     });
   });
 
+  describe('sanitizeForPersistence', () => {
+    const { sanitizeForPersistence } = require('../src/react/store');
+
+    it('strips data URLs but passes Dates and class instances through untouched', () => {
+      const createdAt = new Date('2026-01-01');
+      const out = sanitizeForPersistence({
+        createdAt,
+        images: ['data:image/png;base64,AAA', 'https://x/img.png'],
+        files: [{ name: 'a.pdf', dataUrl: 'data:application/pdf;base64,BBB' }],
+        note: 'before data:image/png;base64,CCC after',
+      }) as Record<string, unknown>;
+
+      expect(out.createdAt).toBe(createdAt);
+      expect(out.images).toEqual(['https://x/img.png']);
+      expect((out.files as Array<Record<string, unknown>>)[0]).toEqual({ name: 'a.pdf' });
+      expect(out.note).toBe('before [image data omitted] after');
+    });
+  });
+
   describe('session persistence', () => {
     it('uses provided sessionId', () => {
       const addr = uniqueAddr();

@@ -80,10 +80,12 @@ function shouldPersistImageUrl(value: unknown): value is string {
 //     readable placeholder
 //   - as entries of an `images` array → drop them (a placeholder string
 //     there would render as a broken <img>)
+//   - as a file attachment's `dataUrl` → drop the field (a placeholder
+//     would render as a broken download)
 // The walk is recursive because server payloads nest them arbitrarily
 // (ui items, session.messages, trace entries) — a missed path is a quota
 // blowout, so we sweep everything instead of enumerating known spots.
-function sanitizeForPersistence(value: unknown): unknown {
+export function sanitizeForPersistence(value: unknown): unknown {
   if (typeof value === 'string') {
     return value.replace(/data:[^;,\s]+;base64,[A-Za-z0-9+/=]+/g, OMITTED_DATA_URL);
   }
@@ -94,12 +96,17 @@ function sanitizeForPersistence(value: unknown): unknown {
       .filter((item) => item !== OMITTED_DATA_URL);
   }
 
-  if (value && typeof value === 'object') {
+  // Walk plain objects only — Date/class instances would be destroyed by
+  // an Object.entries rebuild and can't carry data URLs anyway.
+  if (value && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype) {
     const next: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
       if (key === 'images' && Array.isArray(item)) {
         const images = item.filter(shouldPersistImageUrl);
         if (images.length) next[key] = images;
+        continue;
+      }
+      if (key === 'dataUrl' && typeof item === 'string' && item.startsWith('data:')) {
         continue;
       }
       next[key] = sanitizeForPersistence(item);

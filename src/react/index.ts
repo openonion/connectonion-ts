@@ -17,6 +17,7 @@ export { fetchAgentInfo } from '../connect';
 
 // Store types
 export { type Message } from './store';
+export { sanitizeForPersistence } from './store';
 
 // useAgentForHuman hook
 export { useAgentForHuman, isChatItemType, isEventType } from './use-agent-for-human';

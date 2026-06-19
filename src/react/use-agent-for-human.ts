@@ -1,14 +1,12 @@
 /**
  * @llm-note
- *   Dependencies: imports from [react, src/connect (connect, RemoteAgent), src/react/store] | imported by [src/react/index.ts]
- *   Data flow: hook owns one RemoteAgent per address:sessionId → agent.onMessage flushes ui/status/session/error into the zustand store → React re-renders from the store
- *   State/Effects: caches the agent in a ref across renders | persists session via the store | input() is fire-and-forget (errors surface via agent.error in the flush)
+ *   Dependencies: imports from [react, src/react/agent-cache (acquireAgent/dropAgent), src/react/store] | imported by [src/react/index.ts]
+ *   Data flow: hook gets one RemoteAgent per address:sessionId from the live-connection cache → agent.onMessage flushes ui/status/session/error into the zustand store → React re-renders from the store
+ *   State/Effects: reuses the cached live RemoteAgent across session switches (agent-cache, bounded LRU) | persists session via the store | input() is fire-and-forget (errors surface via agent.error in the flush)
  *   Integration: exposes useAgentForHuman(address, options) returning {ui, status, input, reconnect, send, reset, ...}
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  connect,
-  RemoteAgent,
   ChatItem,
   AgentStatus,
   ConnectionState,
@@ -16,6 +14,7 @@ import {
   ApprovalMode,
   OutgoingMessage,
 } from '../connect';
+import { acquireAgent, dropAgent } from './agent-cache';
 import { getStore, type Message } from './store';
 
 /**
@@ -174,21 +173,11 @@ export function useAgentForHuman(
   const updateMessages = useStore((s) => s.updateMessages);
   const resetStore = useStore((s) => s.reset);
 
-  // RemoteAgent instance (keyed by address + sessionId)
-  const agentRef = useRef<RemoteAgent | null>(null);
-  const keyRef = useRef<string>(`${address}:${sessionId}`);
-
-  // Tear down the cached agent when the caller switches to a different address or session
-  // so the next render creates a fresh RemoteAgent pointing at the correct endpoint.
-  if (keyRef.current !== `${address}:${sessionId}`) {
-    agentRef.current = null;
-    keyRef.current = `${address}:${sessionId}`;
-  }
-
-  if (!agentRef.current) {
-    agentRef.current = connect(address);
-  }
-  const agent = agentRef.current;
+  // RemoteAgent for this (address, sessionId), reused from the live-connection cache.
+  // Switching session no longer tears the WebSocket down and reconnects: the previous
+  // session's connection stays alive in the background and switching back reuses it.
+  // (See agent-cache.ts — bounded LRU so connections don't leak.)
+  const agent = useMemo(() => acquireAgent(address, sessionId), [address, sessionId]);
 
   // connectionState is initialized from the agent and then kept in sync via onMessage.
   const [connectionState, setConnectionState] = useState<ConnectionState>(agent.connectionState);
@@ -197,7 +186,7 @@ export function useAgentForHuman(
   // This replaces a polling interval: every streaming event from the server triggers
   // one synchronous flush of all derived state into React/Zustand.
   useEffect(() => {
-    agent.onMessage = () => {
+    const flush = () => {
       setUI([...agent.ui]);
       setStatus(agent.status);
       setConnectionState(agent.connectionState);
@@ -209,6 +198,18 @@ export function useAgentForHuman(
         }
       }
     };
+    agent.onMessage = flush;
+
+    // Sync immediately on (re)mount so switching back to a cached connection reflects its
+    // real state at once instead of waiting for the next server event:
+    //  - connectionState: a reused live connection must not flash "offline".
+    //  - full flush when the agent already holds UI — it kept streaming in the background
+    //    (e.g. a task that finished while we were on another session), so show the result
+    //    now without needing the user to send another message. Skip the full flush on a
+    //    cold agent (empty ui) so we don't clobber the store localStorage just hydrated.
+    setConnectionState(agent.connectionState);
+    if (agent.ui.length > 0) flush();
+
     return () => { agent.onMessage = null; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent]);
@@ -295,7 +296,8 @@ export function useAgentForHuman(
   };
 
   const reset = () => {
-    agent.reset();
+    agent.reset();          // closes this session's WebSocket + clears agent state
+    dropAgent(address, sessionId);  // forget the now-closed agent so a re-acquire is fresh
     resetStore();
   };
 

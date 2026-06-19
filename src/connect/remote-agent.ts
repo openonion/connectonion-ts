@@ -70,7 +70,7 @@ export class RemoteAgent {
   private _inputTimer: ReturnType<typeof setTimeout> | null = null;
 
   // PING/PONG health check
-  private _lastPingTime = 0;
+  private _lastActivityTime = 0;
   private _pingTimer: ReturnType<typeof setInterval> | null = null;
 
   // Callback + promise for ensureConnected
@@ -187,7 +187,7 @@ export class RemoteAgent {
 
       ws.onopen = () => {
         this._connectionState = 'connected';
-        this._lastPingTime = Date.now();
+        this._lastActivityTime = Date.now();
         this._startPingMonitor();
 
         // Send CONNECT with session_id + session data
@@ -388,7 +388,7 @@ export class RemoteAgent {
     await new Promise<void>((resolve, reject) => {
       ws.onopen = () => {
         this._connectionState = 'connected';
-        this._lastPingTime = Date.now();
+        this._lastActivityTime = Date.now();
         this._startPingMonitor();
         resolve();
       };
@@ -448,9 +448,14 @@ export class RemoteAgent {
     const raw = typeof evt.data === 'string' ? evt.data : String(evt.data);
     const data = JSON.parse(raw);
 
-    // PING/PONG keepalive
+    // Any inbound frame proves the link is alive — reset the liveness clock on EVERY
+    // message, not just PING. Otherwise a busy task (streaming tool calls + screenshots)
+    // can delay the periodic PING past the 60s threshold and the monitor false-positives
+    // a dead connection mid-run, dropping it while data is actively flowing.
+    this._lastActivityTime = Date.now();
+
+    // PING/PONG keepalive — PING also covers idle periods with no other traffic.
     if (data?.type === 'PING') {
-      this._lastPingTime = Date.now();
       this._ws?.send(JSON.stringify({ type: 'PONG' }));
       return;
     }
@@ -685,7 +690,7 @@ export class RemoteAgent {
   private _startPingMonitor(): void {
     this._stopPingMonitor();
     this._pingTimer = setInterval(() => {
-      if (Date.now() - this._lastPingTime > 60000) {
+      if (Date.now() - this._lastActivityTime > 60000) {
         this._stopPingMonitor();
         this._ws?.close();
       }

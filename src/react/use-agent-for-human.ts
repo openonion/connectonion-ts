@@ -13,6 +13,7 @@ import {
   SessionState,
   ApprovalMode,
   OutgoingMessage,
+  RemoteSessionStatus,
 } from '../connect';
 import { acquireAgent, dropAgent } from './agent-cache';
 import { getStore, type Message } from './store';
@@ -59,9 +60,9 @@ export interface UseAgentForHumanReturn {
    * The caller decides when and how often to invoke this — no built-in interval.
    *
    * @param sessionId - Session UUID to probe
-   * @returns 'executing' | 'suspended' | 'connected' | 'not_found'
+   * @returns 'running' | 'connected' | 'not_found'
    */
-  checkSessionStatus: (sessionId: string) => Promise<'executing' | 'suspended' | 'connected' | 'not_found'>;
+  checkSessionStatus: (sessionId: string) => Promise<RemoteSessionStatus>;
 
 
   /** Current approval mode. Defaults to 'safe' when no session exists yet. */

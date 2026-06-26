@@ -120,6 +120,8 @@ export type AgentStatus = 'idle' | 'working' | 'waiting';
 
 export type ConnectionState = 'disconnected' | 'connected' | 'reconnecting';
 
+export type RemoteSessionStatus = 'running' | 'connected' | 'not_found';
+
 export interface FileAttachment {
   name: string;
   type: string;

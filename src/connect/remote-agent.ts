@@ -37,7 +37,7 @@
 import * as address from '../address';
 import {
   AgentStatus, ApprovalMode, ChatItem, ChatItemType, ConnectionState,
-  ConnectOptions, ResolvedEndpoint, Response, SessionState, WebSocketCtor, WebSocketLike,
+  ConnectOptions, RemoteSessionStatus, ResolvedEndpoint, Response, SessionState, WebSocketCtor, WebSocketLike,
 } from './types';
 import { getWebSocketCtor, generateUUID, normalizeRelayUrl, resolveEndpoint } from './endpoint';
 import { ensureKeys, signPayload } from './auth';
@@ -72,6 +72,10 @@ export class RemoteAgent {
   // PING/PONG health check
   private _lastActivityTime = 0;
   private _pingTimer: ReturnType<typeof setInterval> | null = null;
+  private _sessionStatusWaiters = new Map<string, {
+    resolves: Array<(status: RemoteSessionStatus) => void>;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
 
   // Callback + promise for ensureConnected
   private _connectResolve: ((data: Record<string, unknown>) => void) | null = null;
@@ -256,6 +260,7 @@ export class RemoteAgent {
     this._connectionState = 'disconnected';
     this._error = null;
     this._settleInput();
+    this._settleSessionStatusWaiters('not_found');
   }
 
   resetConversation(): void { this.reset(); }
@@ -267,25 +272,23 @@ export class RemoteAgent {
     return { type: 'ONBOARD_SUBMIT', ...signPayload(this._keys, payload) };
   }
 
-  async checkSessionStatus(sessionId: string): Promise<'executing' | 'suspended' | 'connected' | 'not_found'> {
+  async checkSessionStatus(sessionId: string): Promise<RemoteSessionStatus> {
     // If we have a live WS, send SESSION_STATUS over it (no new connection needed)
     if (this._ws && this._authenticated) {
       return new Promise((resolve) => {
-        const timeout = setTimeout(() => resolve('not_found'), 5000);
-        // Temporarily intercept the next SESSION_STATUS response
-        const origHandler = this._ws!.onmessage;
-        this._ws!.onmessage = (evt: { data: unknown }) => {
-          const raw = typeof evt.data === 'string' ? evt.data : String(evt.data);
-          const data = JSON.parse(raw);
-          if (data?.type === 'SESSION_STATUS') {
-            clearTimeout(timeout);
-            this._ws!.onmessage = origHandler;
-            resolve(data.status || 'not_found');
-          } else {
-            // Not our response — pass to normal handler
-            this._handleMessage(evt);
-          }
-        };
+        const existing = this._sessionStatusWaiters.get(sessionId);
+        if (existing) {
+          existing.resolves.push(resolve);
+          return;
+        }
+
+        const timer = setTimeout(() => {
+          const waiter = this._sessionStatusWaiters.get(sessionId);
+          if (!waiter) return;
+          this._sessionStatusWaiters.delete(sessionId);
+          for (const resolve of waiter.resolves) resolve('not_found');
+        }, 5000);
+        this._sessionStatusWaiters.set(sessionId, { resolves: [resolve], timer });
         this._ws!.send(JSON.stringify({
           type: 'SESSION_STATUS',
           session: { session_id: sessionId },
@@ -313,7 +316,7 @@ export class RemoteAgent {
         if (data?.type === 'SESSION_STATUS') {
           clearTimeout(timeout);
           ws.close();
-          resolve(data.status || 'not_found');
+          resolve(this._normalizeSessionStatus(data.status));
         }
       };
       ws.onerror = () => { clearTimeout(timeout); ws.close(); resolve('not_found'); };
@@ -491,7 +494,7 @@ export class RemoteAgent {
         this._settleInput();
         resolve?.({ text: '', done: true });
       }
-      // If status is "executing", events will stream in via _handleMessage — don't resolve yet
+      // If status is "running", events will stream in via _handleMessage — don't resolve yet
       this._onMessage?.();
       return;
     }
@@ -499,6 +502,18 @@ export class RemoteAgent {
     // Session sync
     if (data?.type === 'session_sync' && data.session) {
       this._currentSession = data.session;
+    }
+
+    if (data?.type === 'SESSION_STATUS') {
+      const sid = typeof data.session_id === 'string' ? data.session_id : '';
+      const waiter = sid ? this._sessionStatusWaiters.get(sid) : undefined;
+      if (waiter) {
+        clearTimeout(waiter.timer);
+        this._sessionStatusWaiters.delete(sid);
+        const status = this._normalizeSessionStatus(data.status);
+        for (const resolve of waiter.resolves) resolve(status);
+      }
+      return;
     }
 
     if (data?.type === 'RECONNECTED') {
@@ -646,6 +661,7 @@ export class RemoteAgent {
     this._ws = null;
     this._authenticated = false;
     this._stopPingMonitor();
+    this._settleSessionStatusWaiters('not_found');
 
     // Reject pending connect
     if (this._connectReject) {
@@ -685,6 +701,7 @@ export class RemoteAgent {
     }
     this._authenticated = false;
     this._connectionState = 'disconnected';
+    this._settleSessionStatusWaiters('not_found');
   }
 
   private _startPingMonitor(): void {
@@ -721,5 +738,17 @@ export class RemoteAgent {
     if (!this.address.startsWith('0x') || this.address.length !== 66) return;
     const resolved = await resolveEndpoint(this.address, this._relayUrl);
     if (resolved) this._resolvedEndpoint = resolved;
+  }
+
+  private _normalizeSessionStatus(status: unknown): RemoteSessionStatus {
+    return status === 'running' || status === 'connected' ? status : 'not_found';
+  }
+
+  private _settleSessionStatusWaiters(status: RemoteSessionStatus): void {
+    for (const waiter of this._sessionStatusWaiters.values()) {
+      clearTimeout(waiter.timer);
+      for (const resolve of waiter.resolves) resolve(status);
+    }
+    this._sessionStatusWaiters.clear();
   }
 }

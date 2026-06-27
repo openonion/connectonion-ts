@@ -1000,6 +1000,112 @@ describe('persistent connection', () => {
 
     agent.reset();
   });
+
+  it('keeps the active stream handler while checking session status', async () => {
+    let wsInstance: MockWebSocket | null = null;
+
+    class SessionStatusWS extends MockWebSocket {
+      constructor(url: string) {
+        super(url);
+        wsInstance = this;
+      }
+
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'SESSION_STATUS') return;
+        super.send(data);
+      }
+    }
+
+    const agent = connect('0xabc123', {
+      relayUrl: 'ws://localhost:8000',
+      wsCtor: SessionStatusWS as any,
+    });
+
+    await agent.input('first');
+    expect(wsInstance).not.toBeNull();
+    const originalHandler = wsInstance!.onmessage;
+
+    const statusPromise = agent.checkSessionStatus('test-session');
+
+    expect(wsInstance!.onmessage).toBe(originalHandler);
+    wsInstance!.onmessage?.({
+      data: JSON.stringify({ type: 'SESSION_STATUS', session_id: 'test-session', status: 'connected' }),
+    });
+
+    await expect(statusPromise).resolves.toBe('connected');
+    agent.reset();
+  });
+
+  it('returns the host running status for an active session', async () => {
+    let wsInstance: MockWebSocket | null = null;
+
+    class RunningStatusWS extends MockWebSocket {
+      constructor(url: string) {
+        super(url);
+        wsInstance = this;
+      }
+
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'SESSION_STATUS') return;
+        super.send(data);
+      }
+    }
+
+    const agent = connect('0xabc123', {
+      relayUrl: 'ws://localhost:8000',
+      wsCtor: RunningStatusWS as any,
+    });
+
+    await agent.input('first');
+    const statusPromise = agent.checkSessionStatus('test-session');
+
+    wsInstance!.onmessage?.({
+      data: JSON.stringify({ type: 'SESSION_STATUS', session_id: 'test-session', status: 'running' }),
+    });
+
+    await expect(statusPromise).resolves.toBe('running');
+    agent.reset();
+  });
+
+  it('shares concurrent status checks for the same session', async () => {
+    let wsInstance: MockWebSocket | null = null;
+    let statusRequestCount = 0;
+
+    class SharedStatusWS extends MockWebSocket {
+      constructor(url: string) {
+        super(url);
+        wsInstance = this;
+      }
+
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'SESSION_STATUS') {
+          statusRequestCount += 1;
+          return;
+        }
+        super.send(data);
+      }
+    }
+
+    const agent = connect('0xabc123', {
+      relayUrl: 'ws://localhost:8000',
+      wsCtor: SharedStatusWS as any,
+    });
+
+    await agent.input('first');
+    const first = agent.checkSessionStatus('test-session');
+    const second = agent.checkSessionStatus('test-session');
+
+    expect(statusRequestCount).toBe(1);
+    wsInstance!.onmessage?.({
+      data: JSON.stringify({ type: 'SESSION_STATUS', session_id: 'test-session', status: 'running' }),
+    });
+
+    await expect(Promise.all([first, second])).resolves.toEqual(['running', 'running']);
+    agent.reset();
+  });
 });
 
 describe('CONNECT sends session data', () => {
@@ -1082,15 +1188,15 @@ describe('reconnect statuses', () => {
     agent.reset();
   });
 
-  it('reconnect with status "executing" waits for OUTPUT', async () => {
-    class ExecutingWS extends MockWebSocket {
+  it('reconnect with status "running" waits for OUTPUT', async () => {
+    class RunningWS extends MockWebSocket {
       send(data: unknown): void {
         const msg = JSON.parse(String(data));
         if (msg.type === 'CONNECT') {
           setTimeout(() => this.onmessage && this.onmessage({
-            data: JSON.stringify({ type: 'CONNECTED', session_id: 'abc', status: 'executing' })
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 'abc', status: 'running' })
           }), 0);
-          // Agent still executing — send OUTPUT after a delay
+          // Agent still running — send OUTPUT after a delay
           setTimeout(() => this.onmessage && this.onmessage({
             data: JSON.stringify({ type: 'OUTPUT', result: 'done from server', session: {} })
           }), 20);
@@ -1098,7 +1204,7 @@ describe('reconnect statuses', () => {
       }
     }
 
-    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: ExecutingWS as any });
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: RunningWS as any });
     (agent as any)._currentSession = { session_id: 'abc' };
 
     const result = await agent.reconnect('abc');

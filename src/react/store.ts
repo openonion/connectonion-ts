@@ -2,8 +2,8 @@
  * @purpose Zustand store factory for per-session agent state, persisted to localStorage
  * @llm-note
  *   Dependencies: imports from [zustand, zustand/middleware, src/connect/types (ChatItem, AgentStatus, SessionState)] | imported by [src/react/index.ts]
- *   Data flow: getStore(address, sessionId) → creates or retrieves cached zustand store → persisted to localStorage as co:agent:{address}:session:{sessionId}
- *   State/Effects: storeCache (module-level Map) prevents duplicate stores | each store persists messages, ui, session, timestamps to localStorage via zustand/persist | persisted state is sanitized: base64 data URLs are stripped (screenshots would blow the ~5MB localStorage quota); live images survive in memory and replays re-fetch from the server
+ *   Data flow: getStore(address, sessionId) → prunes old sessions → creates or retrieves cached zustand store → persisted to localStorage as co:agent:{address}:session:{sessionId}
+ *   State/Effects: storeCache (module-level Map) prevents duplicate stores | each store persists messages, ui, session, timestamps to localStorage via zustand/persist | persisted state is sanitized: base64 data URLs are stripped (screenshots would blow the ~5MB localStorage quota); live images survive in memory and replays re-fetch from the server | at most MAX_PERSISTED_SESSIONS (20) sessions are kept — opening a session prunes the least-recently-updated, since the server is the source of truth
  *   Integration: exposes getStore(), Message, AgentState, AgentActions, AgentStore types
  *   Performance: storeCache is singleton Map — O(1) lookup per address:sessionId pair | partialize() limits persisted state size
  */
@@ -67,6 +67,13 @@ function createInitialState(): AgentState {
 const storeCache = new Map<string, UseBoundStore<StoreApi<AgentStore>>>();
 
 const OMITTED_DATA_URL = '[image data omitted]';
+
+// The ~5MB localStorage quota is shared across the whole origin, and sessions
+// never expire on their own. Without a cap they accumulate until a write throws
+// QuotaExceededError and the newest session silently fails to persist. Keep only
+// the most-recently-updated sessions; the server is the source of truth, so a
+// pruned session just re-fetches from the server the next time it's opened.
+export const MAX_PERSISTED_SESSIONS = 20;
 
 function shouldPersistImageUrl(value: unknown): value is string {
   // http(s) URLs persist; base64 payloads and absurdly long URLs don't.
@@ -151,10 +158,29 @@ function createAgentStore(address: string, sessionId: string) {
   );
 }
 
+// Drop all but the MAX_PERSISTED_SESSIONS most-recently-updated session keys.
+// The server is the source of truth, so a pruned session just re-fetches on next open.
+export function pruneOldSessions(storage: Storage): void {
+  const sessions: Array<{ key: string; updatedAt: number }> = [];
+  for (let i = 0; i < storage.length; i++) {
+    const key = storage.key(i);
+    if (!key || !key.startsWith('co:agent:') || !key.includes(':session:')) continue;
+    const raw = storage.getItem(key);
+    if (!raw) continue;
+    sessions.push({ key, updatedAt: JSON.parse(raw)?.state?.updatedAt ?? 0 });
+  }
+
+  if (sessions.length <= MAX_PERSISTED_SESSIONS) return;
+  sessions.sort((a, b) => b.updatedAt - a.updatedAt);
+  sessions.slice(MAX_PERSISTED_SESSIONS).forEach(({ key }) => storage.removeItem(key));
+}
+
 export function getStore(address: string, sessionId: string) {
   const key = `${address}:${sessionId}`;
   let store = storeCache.get(key);
   if (!store) {
+    const storage = (globalThis as any).localStorage as Storage | undefined;
+    if (storage) pruneOldSessions(storage);
     store = createAgentStore(address, sessionId);
     storeCache.set(key, store);
   }

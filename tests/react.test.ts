@@ -33,6 +33,8 @@ const mockLocalStorage = {
   setItem: (key: string, value: string) => { mockStorage[key] = value; },
   removeItem: (key: string) => { delete mockStorage[key]; },
   clear: () => { Object.keys(mockStorage).forEach(k => delete mockStorage[k]); },
+  get length() { return Object.keys(mockStorage).length; },
+  key: (i: number) => Object.keys(mockStorage)[i] ?? null,
 };
 // jsdom exposes localStorage as an accessor; plain assignment is silently ignored
 Object.defineProperty(globalThis, 'localStorage', { value: mockLocalStorage, writable: true });
@@ -320,6 +322,40 @@ describe('useAgentForHuman hook', () => {
       expect(out.images).toEqual(['https://x/img.png']);
       expect((out.files as Array<Record<string, unknown>>)[0]).toEqual({ name: 'a.pdf' });
       expect(out.note).toBe('before [image data omitted] after');
+    });
+  });
+
+  describe('pruneOldSessions', () => {
+    const { pruneOldSessions, MAX_PERSISTED_SESSIONS } = require('../src/react/store');
+
+    const seed = (id: number, updatedAt: number) => {
+      mockLocalStorage.setItem(
+        `co:agent:0xprune:session:s${id}`,
+        JSON.stringify({ state: { updatedAt }, version: 0 })
+      );
+    };
+
+    it('keeps the MAX_PERSISTED_SESSIONS most-recently-updated sessions', () => {
+      mockLocalStorage.clear();
+      mockLocalStorage.setItem('connectonion_keys', '{"address":"0x"}'); // unrelated key untouched
+      for (let i = 0; i < 25; i++) seed(i, i); // s24 newest, s0 oldest
+
+      pruneOldSessions(mockLocalStorage as unknown as Storage);
+
+      const kept = Object.keys(mockStorage).filter((k) => k.includes(':session:'));
+      expect(kept).toHaveLength(MAX_PERSISTED_SESSIONS);
+      expect(kept).toContain('co:agent:0xprune:session:s24'); // newest survives
+      expect(kept).not.toContain('co:agent:0xprune:session:s0'); // oldest pruned
+      expect(mockStorage['connectonion_keys']).toBe('{"address":"0x"}'); // non-session key untouched
+    });
+
+    it('does nothing when under the cap', () => {
+      mockLocalStorage.clear();
+      for (let i = 0; i < 5; i++) seed(i, i);
+
+      pruneOldSessions(mockLocalStorage as unknown as Storage);
+
+      expect(Object.keys(mockStorage)).toHaveLength(5);
     });
   });
 

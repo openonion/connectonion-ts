@@ -14,7 +14,7 @@ describe('fetchAgentInfo', () => {
     global.fetch = jest.fn(async (input: unknown) => {
       const url = String(input);
 
-      if (url === `https://oo.openonion.ai/api/relay/agents/${ADDRESS}`) {
+      if (url === `https://oo.openonion.ai/api/agents/${ADDRESS}`) {
         return {
           ok: true,
           json: async () => ({
@@ -55,7 +55,7 @@ describe('fetchAgentInfo', () => {
   it('marks stale DB records offline but keeps the published name', async () => {
     global.fetch = jest.fn(async (input) => {
       const url = String(input);
-      if (url === `https://oo.openonion.ai/api/relay/agents/${ADDRESS}`) {
+      if (url === `https://oo.openonion.ai/api/agents/${ADDRESS}`) {
         return {
           ok: true,
           json: async () => ({

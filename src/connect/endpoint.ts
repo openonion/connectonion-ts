@@ -134,7 +134,7 @@ export async function resolveEndpoint(
   // Outer lookup — on any fetch failure (DNS/TLS/timeout/CORS) resolve to
   // null so RemoteAgent falls back to the relay /ws/input path. Swallowing
   // here is the contract, not hiding a bug.
-  const agentInfo = await fetch(`${httpsRelay}/api/relay/agents/${agentAddress}`, {
+  const agentInfo = await fetch(`${httpsRelay}/api/agents/${agentAddress}`, {
     signal: AbortSignal.timeout(timeoutMs),
   })
     .then(r => r.ok ? r.json() as Promise<{ endpoints?: string[] }> : null)
@@ -186,7 +186,7 @@ export async function fetchAgentInfo(
   const httpsRelay = normalizeRelayUrl(relayUrl).replace(/^wss?:\/\//, 'https://');
 
   // Outer lookup — fetch failures surface as "offline" rather than crashing.
-  const relayData = await fetch(`${httpsRelay}/api/relay/agents/${agentAddress}`, {
+  const relayData = await fetch(`${httpsRelay}/api/agents/${agentAddress}`, {
     signal: AbortSignal.timeout(5000),
   })
     .then(r => r.ok ? r.json() as Promise<{

@@ -117,6 +117,92 @@ export function sanitizeForPersistence(value: unknown): unknown {
   return value;
 }
 
+// =============================================================================
+// Quota-resilient persistence
+// =============================================================================
+
+interface WebStorageLike {
+  length: number;
+  key(index: number): string | null;
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+}
+
+/** True for a browser "storage full" error across engines (avoids DOM lib types). */
+function isQuotaExceeded(e: unknown): boolean {
+  if (!e || typeof e !== 'object') return false;
+  const err = e as { name?: string; code?: number };
+  return (
+    err.name === 'QuotaExceededError' ||
+    err.name === 'NS_ERROR_DOM_QUOTA_REACHED' || // Firefox
+    err.code === 22 ||
+    err.code === 1014
+  );
+}
+
+/** Other persisted sessions, oldest-first, for reclaiming space under quota. */
+function otherSessionsOldestFirst(ls: WebStorageLike, keepName: string): string[] {
+  const sessions: Array<{ key: string; updatedAt: number }> = [];
+  for (let i = 0; i < ls.length; i++) {
+    const key = ls.key(i);
+    if (!key || key === keepName || !key.startsWith('co:agent:')) continue;
+    let updatedAt = 0;
+    try {
+      updatedAt = JSON.parse(ls.getItem(key) || '{}')?.state?.updatedAt ?? 0;
+    } catch {
+      // Unparseable entry — treat as oldest so it is evicted first.
+    }
+    sessions.push({ key, updatedAt });
+  }
+  return sessions.sort((a, b) => a.updatedAt - b.updatedAt).map((s) => s.key);
+}
+
+/**
+ * localStorage wrapper whose setItem never throws on a full quota. zustand
+ * persist writes the whole session synchronously on every state change, and
+ * those writes run inside the WebSocket message handler — an uncaught
+ * QuotaExceededError there breaks live messaging entirely (sends and incoming
+ * frames both die mid-handler). On quota we evict other persisted sessions
+ * oldest-first and retry; if this session alone exceeds the quota we drop the
+ * write and keep running in memory (the transcript just won't survive refresh).
+ */
+const quotaWarned = new Set<string>();
+
+export function createResilientLocalStorage(ls: WebStorageLike): WebStorageLike {
+  const trySet = (name: string, value: string): boolean => {
+    try {
+      ls.setItem(name, value);
+      return true;
+    } catch (e) {
+      if (!isQuotaExceeded(e)) throw e;
+      return false;
+    }
+  };
+  return {
+    get length() { return ls.length; },
+    key: (index) => ls.key(index),
+    getItem: (name) => ls.getItem(name),
+    removeItem: (name) => ls.removeItem(name),
+    setItem: (name, value) => {
+      if (trySet(name, value)) return;
+      for (const key of otherSessionsOldestFirst(ls, name)) {
+        ls.removeItem(key);
+        if (trySet(name, value)) return;
+      }
+      // This session alone exceeds the quota. Keep running in memory; warn once
+      // per session so a busy transcript doesn't flood the console every frame.
+      if (!quotaWarned.has(name)) {
+        quotaWarned.add(name);
+        console.warn(
+          `[connectonion] session transcript exceeds localStorage quota; ` +
+          `continuing in memory only (won't survive refresh): ${name}`
+        );
+      }
+    },
+  };
+}
+
 function createAgentStore(address: string, sessionId: string) {
   return create<AgentStore>()(
     persist(
@@ -137,7 +223,10 @@ function createAgentStore(address: string, sessionId: string) {
       }),
       {
         name: `co:agent:${address}:session:${sessionId}`,
-        storage: createJSONStorage(() => (globalThis as any).localStorage),
+        storage: createJSONStorage(() => {
+          const ls = (globalThis as any).localStorage as WebStorageLike | undefined;
+          return ls ? createResilientLocalStorage(ls) : (undefined as any);
+        }),
         skipHydration: typeof globalThis !== 'undefined' && !(globalThis as any).localStorage,
         partialize: (state) => ({
           messages: sanitizeForPersistence(state.messages) as Message[],

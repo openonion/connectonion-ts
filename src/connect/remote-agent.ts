@@ -372,6 +372,19 @@ export class RemoteAgent {
         break;
       }
     }
+    if (cutoff === this._chatItems.length) {
+      // Local history can be SHORTER than the server's (fresh browser, evicted
+      // session), so the count check above never fires and a just-sent prompt
+      // would be silently dropped. Preserve the tail from the last local user
+      // prompt onward unless the server already has that exact prompt last.
+      const lastServerUser = [...serverItems].reverse().find(i => i.type === 'user');
+      for (let i = this._chatItems.length - 1; i >= 0; i--) {
+        const item = this._chatItems[i];
+        if (item.type !== 'user') continue;
+        if (!lastServerUser || item.content !== lastServerUser.content) cutoff = i;
+        break;
+      }
+    }
     this._chatItems = [...serverItems, ...this._chatItems.slice(cutoff)];
   }
 

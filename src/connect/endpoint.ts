@@ -62,6 +62,7 @@ type AgentInfoSource = {
   trust?: string;
   version?: string;
   model?: string;
+  balance_usd?: number;
   accepted_inputs?: AgentInfo['accepted_inputs'];
 };
 
@@ -118,6 +119,7 @@ function toAgentInfo(source?: AgentInfoSource | null): Partial<AgentInfo> {
   if (source?.trust) info.trust = source.trust;
   if (source?.version) info.version = source.version;
   if (source?.model) info.model = source.model;
+  if (typeof source?.balance_usd === 'number') info.balance_usd = source.balance_usd;
   if (source?.accepted_inputs) info.accepted_inputs = source.accepted_inputs;
 
   return info;

@@ -461,3 +461,73 @@ describe('isEventType helper', () => {
     }
   });
 });
+
+describe('createResilientLocalStorage (quota handling)', () => {
+  const { createResilientLocalStorage } = require('../src/react/store');
+
+  // localStorage mock with a byte budget: setItem throws QuotaExceededError
+  // (like a real browser) when the total stored size would exceed `budget`.
+  function makeQuotaStorage(budget: number) {
+    const data = new Map<string, string>();
+    const size = (skip?: string) => {
+      let total = 0;
+      for (const [k, v] of data) { if (k !== skip) total += k.length + v.length; }
+      return total;
+    };
+    return {
+      data,
+      get length() { return data.size; },
+      key: (i: number) => Array.from(data.keys())[i] ?? null,
+      getItem: (k: string) => (data.has(k) ? data.get(k)! : null),
+      removeItem: (k: string) => { data.delete(k); },
+      setItem: (k: string, v: string) => {
+        if (size(k) + k.length + v.length > budget) {
+          const err: any = new Error('quota'); err.name = 'QuotaExceededError'; err.code = 22;
+          throw err;
+        }
+        data.set(k, v);
+      },
+    };
+  }
+
+  const sessionValue = (updatedAt: number, pad = '') =>
+    JSON.stringify({ state: { updatedAt, ui: pad } });
+
+  it('evicts other sessions oldest-first and retries until the write fits', () => {
+    const ls = makeQuotaStorage(250);
+    ls.setItem('co:agent:0xA:session:old', sessionValue(1, 'x'.repeat(60)));
+    ls.setItem('co:agent:0xA:session:mid', sessionValue(2, 'x'.repeat(60)));
+    const resilient = createResilientLocalStorage(ls);
+
+    // A fresh write that only fits after old sessions are evicted.
+    resilient.setItem('co:agent:0xA:session:current', sessionValue(3, 'y'.repeat(60)));
+
+    expect(ls.getItem('co:agent:0xA:session:current')).not.toBeNull();
+    expect(ls.getItem('co:agent:0xA:session:old')).toBeNull();   // oldest evicted first
+    // mid may or may not survive; the guarantee is the current write succeeded
+  });
+
+  it('does not throw when the session alone exceeds quota (memory-only fallback)', () => {
+    const ls = makeQuotaStorage(100);
+    const resilient = createResilientLocalStorage(ls);
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(() =>
+      resilient.setItem('co:agent:0xA:session:huge', sessionValue(1, 'z'.repeat(500)))
+    ).not.toThrow();
+    expect(ls.getItem('co:agent:0xA:session:huge')).toBeNull(); // dropped, not persisted
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('never touches non-co:agent keys and rethrows non-quota errors', () => {
+    const ls = makeQuotaStorage(1_000_000);
+    ls.setItem('connectonion_keys', 'identity');
+    const boom: any = new Error('nope'); boom.name = 'TypeError';
+    ls.setItem = () => { throw boom; };
+    const resilient = createResilientLocalStorage(ls);
+
+    expect(() => resilient.setItem('co:agent:0xA:session:x', 'v')).toThrow('nope');
+    expect(ls.getItem('connectonion_keys')).toBe('identity'); // identity key untouched
+  });
+});

@@ -1410,3 +1410,82 @@ describe('error handling', () => {
     expect(agent.status).toBe('idle');
   });
 });
+
+describe('DASHBOARD_SNAPSHOT', () => {
+  // Sends a DASHBOARD_SNAPSHOT right after CONNECTED (the Host's on-connect emit),
+  // and another one after each run's OUTPUT (the post-OUTPUT emit).
+  class DashboardWS extends MockWebSocket {
+    send(data: unknown): void {
+      const msg = JSON.parse(String(data));
+      if (msg.type === 'CONNECT') {
+        setTimeout(() => this.onmessage && this.onmessage({
+          data: JSON.stringify({ type: 'CONNECTED', session_id: 'test-session', status: 'new' })
+        }), 0);
+        setTimeout(() => this.onmessage && this.onmessage({
+          data: JSON.stringify({ type: 'DASHBOARD_SNAPSHOT', html: '<h1>hello</h1>' })
+        }), 0);
+      } else if (msg.type === 'INPUT') {
+        setTimeout(() => this.onmessage && this.onmessage({
+          data: JSON.stringify({ type: 'DASHBOARD_SNAPSHOT', html: '<h1>updated</h1>' })
+        }), 0);
+        setTimeout(() => this.onmessage && this.onmessage({
+          data: JSON.stringify({ type: 'OUTPUT', input_id: msg.input_id, result: 'done', session: { messages: [] } })
+        }), 1);
+      }
+    }
+  }
+
+  it('starts with null dashboardHtml', () => {
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: DashboardWS as any });
+    expect(agent.dashboardHtml).toBeNull();
+    agent.reset();
+  });
+
+  it('connect() opens the socket and receives the on-connect snapshot without input()', async () => {
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: DashboardWS as any });
+    let flushed = false;
+    agent.onMessage = () => { flushed = true; };
+    await agent.connect();
+    // snapshot is delivered via a queued microtask after CONNECTED resolves
+    await new Promise((r) => setTimeout(r, 5));
+    expect(agent.dashboardHtml).toBe('<h1>hello</h1>');
+    expect(flushed).toBe(true);
+    agent.reset();
+  });
+
+  it('connect() is idempotent', async () => {
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: DashboardWS as any });
+    await agent.connect();
+    await expect(agent.connect()).resolves.toBeUndefined();
+    agent.reset();
+  });
+
+  it('updates dashboardHtml on a snapshot pushed during a run', async () => {
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: DashboardWS as any });
+    await agent.input('go');
+    await new Promise((r) => setTimeout(r, 5));
+    expect(agent.dashboardHtml).toBe('<h1>updated</h1>');
+    agent.reset();
+  });
+
+  it('a snapshot with non-string html is ignored (stays null)', async () => {
+    class BadWS extends MockWebSocket {
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 's', status: 'new' })
+          }), 0);
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'DASHBOARD_SNAPSHOT', html: 12345 })
+          }), 0);
+        }
+      }
+    }
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: BadWS as any });
+    await agent.connect();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(agent.dashboardHtml).toBeNull();
+    agent.reset();
+  });
+});

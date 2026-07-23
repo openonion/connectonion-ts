@@ -56,6 +56,12 @@ export interface UseAgentForHumanReturn {
   error: Error | null;
 
   /**
+   * Latest `dashboard.html` snapshot the Host pushed over this connection
+   * (on connect and after each run). `null` until the first snapshot arrives.
+   */
+  dashboardHtml: string | null;
+
+  /**
    * Check whether a specific session is alive on the relay server.
    * The caller decides when and how often to invoke this — no built-in interval.
    *
@@ -84,6 +90,12 @@ export interface UseAgentForHumanReturn {
    * @param options.files - File attachments with name, type, size, and dataUrl
    */
   input: (prompt: string, options?: { images?: string[]; files?: import('../connect/types').FileAttachment[] }) => void;
+
+  /**
+   * Open the WebSocket without sending input, so a landing/draft view receives the
+   * Host's on-connect DASHBOARD_SNAPSHOT before the first message. Idempotent.
+   */
+  connect: () => void;
 
   /**
    * Send a typed message to the agent over the WebSocket.
@@ -183,6 +195,9 @@ export function useAgentForHuman(
   // connectionState is initialized from the agent and then kept in sync via onMessage.
   const [connectionState, setConnectionState] = useState<ConnectionState>(agent.connectionState);
 
+  // Latest dashboard.html snapshot the Host pushed over this connection.
+  const [dashboardHtml, setDashboardHtml] = useState<string | null>(agent.dashboardHtml);
+
   // Register a single onMessage callback for the lifetime of this agent instance.
   // This replaces a polling interval: every streaming event from the server triggers
   // one synchronous flush of all derived state into React/Zustand.
@@ -191,6 +206,7 @@ export function useAgentForHuman(
       setUI([...agent.ui]);
       setStatus(agent.status);
       setConnectionState(agent.connectionState);
+      setDashboardHtml(agent.dashboardHtml);
       if (agent.error) setError(agent.error);
       if (agent.currentSession) {
         setSession(agent.currentSession);
@@ -296,6 +312,12 @@ export function useAgentForHuman(
     agent.reconnect(sessionId);  // non-blocking — updates come via onMessage
   };
 
+  // Open the WebSocket without sending input, so a landing/draft view receives the
+  // Host's on-connect DASHBOARD_SNAPSHOT before the first message. Idempotent.
+  const connect = () => {
+    agent.connect().catch(() => {});  // non-blocking — updates come via onMessage
+  };
+
   const reset = () => {
     agent.reset();          // closes this session's WebSocket + clears agent state
     dropAgent(address, sessionId);  // forget the now-closed agent so a re-acquire is fresh
@@ -329,11 +351,13 @@ export function useAgentForHuman(
     sessionId,
     isProcessing: status !== 'idle',
     error,
+    dashboardHtml,
     checkSessionStatus: (sid: string) => agent.checkSessionStatus(sid),
     mode: session?.mode || 'safe',
     ulwTurns: session?.ulw_turns ?? null,
     ulwTurnsUsed: session?.ulw_turns_used ?? null,
     input,
+    connect,
     sendMessage,
     signOnboard: (options: { inviteCode?: string; payment?: number }) => agent.signOnboard(options),
     setMode,

@@ -60,6 +60,9 @@ export class RemoteAgent {
   _chatItems: ChatItem[] = [];
   _error: Error | null = null;
 
+  // Latest dashboard.html snapshot pushed by the Host (on connect + after each run).
+  _dashboardHtml: string | null = null;
+
   // Persistent WebSocket
   private _ws: WebSocketLike | null = null;
   private _authenticated = false;
@@ -102,8 +105,18 @@ export class RemoteAgent {
   get ui(): ChatItem[] { return this._chatItems; }
   get mode(): ApprovalMode { return this._currentSession?.mode || 'safe'; }
   get error(): Error | null { return this._error || null; }
+  get dashboardHtml(): string | null { return this._dashboardHtml; }
 
   // --- Public API ---
+
+  /**
+   * Open the authenticated WebSocket without sending input. Lets a landing/draft
+   * view receive the Host's on-connect DASHBOARD_SNAPSHOT before the first input().
+   * Idempotent — a no-op if already connected.
+   */
+  async connect(): Promise<void> {
+    await this._ensureConnected();
+  }
 
   async input(prompt: string, options?: { images?: string[]; files?: import('./types').FileAttachment[] }): Promise<Response> {
     this._addChatItem({ type: 'user', content: prompt, images: options?.images, files: options?.files });
@@ -626,6 +639,12 @@ export class RemoteAgent {
         level: data.level as string,
         message: data.message as string,
       });
+    }
+
+    // DASHBOARD_SNAPSHOT — full dashboard.html, pushed on connect and after each run.
+    // Store it and fall through to the tail flush so subscribers re-render.
+    if (data?.type === 'DASHBOARD_SNAPSHOT') {
+      this._dashboardHtml = typeof data.html === 'string' ? data.html : null;
     }
 
     // OUTPUT — resolve input() promise

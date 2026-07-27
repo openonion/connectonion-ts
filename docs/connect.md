@@ -123,6 +123,8 @@ const {
   error,          // Error | null
   respond,        // (answer: string | string[]) => void - answer ask_user
   respondToApproval, // (approved: boolean, ...) => void
+  connect,        // () => void - open the socket without sending input
+  dashboardHtml,  // string | null - the agent's Home page
 } = useAgentForHuman('0x...', { sessionId });
 ```
 
@@ -156,14 +158,30 @@ function connect(address: string, options?: {
 class RemoteAgent {
   // Actions
   input(prompt: string): Promise<Response>;
+  connect(): Promise<void>;   // open the socket without sending input
   reset(): void;
 
   // State (read-only)
   currentSession: Session;
   ui: UIEvent[];
   status: 'idle' | 'working' | 'waiting';
+  dashboardHtml: string | null;   // the agent's Home page, if it has one
 }
 ```
+
+`connect()` opens the authenticated WebSocket without sending a prompt. `input()` does
+this for you, so you only need `connect()` when you want the connection — and whatever
+the agent pushes on connect — before the first message:
+
+```ts
+const agent = connect('0x...');
+await agent.connect();
+console.log(agent.dashboardHtml);  // the agent's Home page, already delivered
+```
+
+It's idempotent and safe to call concurrently: overlapping calls share one handshake
+rather than opening a second socket. On failure the error is stored on `agent.error`
+and flushed to subscribers before being rethrown.
 
 ## Data Types
 

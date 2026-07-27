@@ -52,6 +52,8 @@ const {
   error,          // Error | null - last error
   respond,        // (answer: string | string[]) => void - answer ask_user
   respondToApproval, // (approved: boolean, ...) => void
+  connect,        // () => void - open the socket without sending input
+  dashboardHtml,  // string | null - the agent's Home page, if it has one
 } = useAgentForHuman(address, options);
 ```
 
@@ -209,6 +211,57 @@ The base `RemoteAgent` (from `connect()`) keeps session **in memory only**. Only
 
 - **Node.js / non-React**: Session lives in memory, lost on process restart
 - **React (useAgentForHuman)**: Session auto-persists to localStorage
+
+## The Agent's Home Page
+
+An agent can publish a Home page — a `dashboard.html` in its project root — which the
+host pushes over the same WebSocket the chat uses. `dashboardHtml` holds the latest
+copy, or `null` if the agent doesn't have one.
+
+```tsx
+const { dashboardHtml, connect } = useAgentForHuman(address, { sessionId });
+
+// Warm the connection so Home paints before the user's first message
+useEffect(() => { connect() }, [connect]);
+
+if (!dashboardHtml) return <Chat />;          // agent has no Home page
+return <Home html={dashboardHtml} />;
+```
+
+The host sends it on connect and again after any run that changed the file, so
+`dashboardHtml` updates on its own — no polling, no refetch. An unchanged page arrives
+as the identical string, so React bails out of the state update and nothing re-renders.
+
+`connect()` opens the socket without sending a prompt, which is what lets a landing or
+draft view receive that on-connect push before any `input()`. It's idempotent, safe to
+call concurrently, and stable across renders, so it can go in an effect's dependency
+array.
+
+### Rendering it safely
+
+**The HTML is agent-authored and untrusted.** Never put it in `dangerouslySetInnerHTML`
+or in an iframe that can reach your origin. Render it in a sandboxed iframe:
+
+```tsx
+<iframe sandbox="allow-scripts" srcDoc={wrapped} />
+```
+
+`sandbox="allow-scripts"` without `allow-same-origin` gives the frame an opaque origin,
+so it can't touch your `localStorage`, keys, or parent DOM. Pair it with a
+Content-Security-Policy — `default-src 'none'` plus a per-render nonce for your own
+script — so the agent's scripts don't run and the page can't reach the network.
+
+Build that wrapper by **wrapping** the agent's HTML in a document you control, not by
+injecting into theirs. String-matching `<head>` to find an insertion point is
+defeatable: a `<head>` inside a comment moves your CSP into that comment and drops the
+policy entirely. Emit your own `<head>` first and put the agent's markup in the body —
+browsers discard a nested `<html>`/`<head>`/`<body>` and keep the children, so a full
+agent document renders unchanged.
+
+If you expose action buttons from the page, treat every message it posts as untrusted
+intent: validate against the skills the agent actually published, and fail closed while
+that list is still loading. See the reference implementation in
+[oo-chat](https://github.com/openonion/oo-chat)'s `components/dashboard/`.
 
 ## Examples
 

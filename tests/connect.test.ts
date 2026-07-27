@@ -1489,3 +1489,135 @@ describe('DASHBOARD_SNAPSHOT', () => {
     agent.reset();
   });
 });
+
+describe('connect() concurrency and failure handling', () => {
+  // Counts sockets and delays CONNECTED, so a second connect() lands while the
+  // first is still mid-handshake — the window the _ws && _authenticated guard misses.
+  function makeSlowWS() {
+    const opened: any[] = [];
+    class SlowWS extends MockWebSocket {
+      constructor(url: string) { super(url); opened.push(this); }
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 'test-session', status: 'new' })
+          }), 20);
+        }
+      }
+    }
+    return { opened, SlowWS };
+  }
+
+  it('concurrent connect() calls share one socket', async () => {
+    const { opened, SlowWS } = makeSlowWS();
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: SlowWS as any });
+
+    await Promise.all([agent.connect(), agent.connect(), agent.connect()]);
+
+    expect(opened.length).toBe(1);
+    agent.reset();
+  });
+
+  it('a connect() during an in-flight connect does not orphan the first promise', async () => {
+    const { SlowWS } = makeSlowWS();
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: SlowWS as any });
+
+    const first = agent.connect();
+    agent.connect();  // fires mid-handshake — must not replace the socket the first awaits
+
+    await expect(first).resolves.toBeUndefined();
+    agent.reset();
+  });
+
+  it('input() after an eager connect() reuses the warmed socket', async () => {
+    const opened: any[] = [];
+    class CountingWS extends MockWebSocket {
+      constructor(url: string) { super(url); opened.push(this); }
+    }
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: CountingWS as any });
+
+    await agent.connect();
+    await agent.input('ping');
+
+    expect(opened.length).toBe(1);
+    agent.reset();
+  });
+
+  it('a failed connect() surfaces the error and flushes', async () => {
+    class FailingWS extends MockWebSocket {
+      constructor(url: string) {
+        super(url);
+        this.onopen = null;
+        setTimeout(() => this.onerror && this.onerror(new Error('refused')), 0);
+      }
+    }
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: FailingWS as any });
+    let flushed = false;
+    agent.onMessage = () => { flushed = true; };
+
+    await expect(agent.connect()).rejects.toThrow();
+    expect(agent.error).toBeInstanceOf(Error);
+    expect(flushed).toBe(true);
+    agent.reset();
+  });
+
+  it('a stale unauthenticated socket is closed, not orphaned, by the next connect', async () => {
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: MockWebSocket as any });
+    // Left behind by an attempt that opened the socket but never authenticated
+    // (e.g. the 30s CONNECT deadline expiring): still open, unusable, and about to
+    // be overwritten. It must be closed rather than dropped on the floor.
+    const stale = { close: jest.fn(), send: jest.fn(), onopen: null, onerror: null, onclose: null, onmessage: null };
+    (agent as any)._ws = stale;
+    (agent as any)._authenticated = false;
+
+    await agent.connect();
+
+    expect(stale.close).toHaveBeenCalled();
+    expect((agent as any)._ws).not.toBe(stale);
+    agent.reset();
+  });
+
+  it('connect() succeeds on a retry after an earlier failure', async () => {
+    let attempt = 0;
+    class FlakyWS extends MockWebSocket {
+      constructor(url: string) {
+        super(url);
+        if (attempt++ === 0) setTimeout(() => this.onerror && this.onerror(new Error('refused')), 1);
+      }
+    }
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: FlakyWS as any });
+
+    await expect(agent.connect()).rejects.toThrow();
+    await expect(agent.connect()).resolves.toBeUndefined();
+
+    agent.reset();
+  });
+});
+
+describe('DASHBOARD_SNAPSHOT resilience', () => {
+  it('a malformed snapshot does not clear an already-rendered dashboard', async () => {
+    class FlipFlopWS extends MockWebSocket {
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 's', status: 'new' })
+          }), 0);
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'DASHBOARD_SNAPSHOT', html: '<h1>good</h1>' })
+          }), 0);
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'DASHBOARD_SNAPSHOT', html: null })
+          }), 1);
+        }
+      }
+    }
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: FlipFlopWS as any });
+    await agent.connect();
+    await new Promise((r) => setTimeout(r, 5));
+
+    expect(agent.dashboardHtml).toBe('<h1>good</h1>');
+    agent.reset();
+  });
+});

@@ -85,6 +85,14 @@ export class RemoteAgent {
   private _connectReject: ((reason?: unknown) => void) | null = null;
   private _connectTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // In-flight connect attempt. The `_ws && _authenticated` fast path only covers a
+  // *finished* connect, so without this a second caller during the (up to 30s)
+  // CONNECT window would open a second WebSocket and overwrite _ws plus
+  // _connectResolve/_connectReject/_connectTimer — orphaning the first caller's
+  // promise and leaking the first socket and its ping monitor. Cleared when the
+  // attempt settles so a failed connect can be retried.
+  private _connecting: Promise<void> | null = null;
+
   _onMessage: (() => void) | null = null;
   set onMessage(fn: (() => void) | null) { this._onMessage = fn; }
 
@@ -112,10 +120,21 @@ export class RemoteAgent {
   /**
    * Open the authenticated WebSocket without sending input. Lets a landing/draft
    * view receive the Host's on-connect DASHBOARD_SNAPSHOT before the first input().
-   * Idempotent — a no-op if already connected.
+   * Idempotent — a no-op if already connected, and concurrent calls share the one
+   * in-flight handshake rather than racing to open a second socket. On failure the
+   * error is stored on the agent and flushed to subscribers before rethrowing.
    */
   async connect(): Promise<void> {
-    await this._ensureConnected();
+    try {
+      await this._ensureConnected();
+    } catch (err) {
+      // Mirror input()'s failure handling: fire-and-forget callers (the React hook)
+      // only observe state through onMessage, so without this an eager connect
+      // fails completely silently — no error, no state change, nothing to retry on.
+      this._error = err instanceof Error ? err : new Error(String(err));
+      this._onMessage?.();
+      throw err;
+    }
   }
 
   async input(prompt: string, options?: { images?: string[]; files?: import('./types').FileAttachment[] }): Promise<Response> {
@@ -403,8 +422,23 @@ export class RemoteAgent {
 
   // --- Private: connection lifecycle ---
 
-  private async _ensureConnected(): Promise<void> {
-    if (this._ws && this._authenticated) return;
+  private _ensureConnected(): Promise<void> {
+    if (this._ws && this._authenticated) return Promise.resolve();
+    if (this._connecting) return this._connecting;
+
+    const attempt = this._doConnect();
+    this._connecting = attempt;
+    // Clear on settle either way (both branches handled, so this derived promise
+    // never surfaces as an unhandled rejection — `attempt` is what callers await).
+    const clear = () => { if (this._connecting === attempt) this._connecting = null; };
+    attempt.then(clear, clear);
+    return attempt;
+  }
+
+  private async _doConnect(): Promise<void> {
+    // A socket left over from a failed attempt is dead weight: _authenticated is
+    // false, so nothing can use it, and overwriting _ws below would leak it.
+    if (this._ws && !this._authenticated) this._closeWs();
 
     this._keys = ensureKeys(this._keys);
     await this._resolveEndpointOnce();
@@ -643,8 +677,10 @@ export class RemoteAgent {
 
     // DASHBOARD_SNAPSHOT — full dashboard.html, pushed on connect and after each run.
     // Store it and fall through to the tail flush so subscribers re-render.
-    if (data?.type === 'DASHBOARD_SNAPSHOT') {
-      this._dashboardHtml = typeof data.html === 'string' ? data.html : null;
+    // A malformed frame is ignored, not treated as "no dashboard" — clearing here
+    // would blank an already-rendered dashboard on one bad push.
+    if (data?.type === 'DASHBOARD_SNAPSHOT' && typeof data.html === 'string') {
+      this._dashboardHtml = data.html;
     }
 
     // OUTPUT — resolve input() promise

@@ -5,7 +5,7 @@
  *   State/Effects: reuses the cached live RemoteAgent across session switches (agent-cache, bounded LRU) | persists session via the store | input() is fire-and-forget (errors surface via agent.error in the flush)
  *   Integration: exposes useAgentForHuman(address, options) returning {ui, status, input, reconnect, send, reset, ...}
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ChatItem,
   AgentStatus,
@@ -93,7 +93,9 @@ export interface UseAgentForHumanReturn {
 
   /**
    * Open the WebSocket without sending input, so a landing/draft view receives the
-   * Host's on-connect DASHBOARD_SNAPSHOT before the first message. Idempotent.
+   * Host's on-connect DASHBOARD_SNAPSHOT before the first message. Idempotent, and
+   * safe to call concurrently. Stable across renders, so it can go in an effect's
+   * dependency array. Failures land in `error`.
    */
   connect: () => void;
 
@@ -314,9 +316,13 @@ export function useAgentForHuman(
 
   // Open the WebSocket without sending input, so a landing/draft view receives the
   // Host's on-connect DASHBOARD_SNAPSHOT before the first message. Idempotent.
-  const connect = () => {
-    agent.connect().catch(() => {});  // non-blocking — updates come via onMessage
-  };
+  // Memoized on the agent identity: callers put this in an effect's dep array, and a
+  // fresh closure per render would re-run that effect on every render.
+  const connect = useCallback(() => {
+    // Errors are surfaced on the agent (error state + onMessage flush) by connect();
+    // caught here only to avoid an unhandled rejection on this fire-and-forget call.
+    agent.connect().catch(() => {});
+  }, [agent]);
 
   const reset = () => {
     agent.reset();          // closes this session's WebSocket + clears agent state

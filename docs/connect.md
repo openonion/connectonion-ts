@@ -77,10 +77,12 @@ Server: tool_result {id: '3', result: '...'}      → UI: {id: '3', status: 'don
 
 ## React Integration
 
-For reactive UI updates in React, use the `useAgentForHuman` hook:
+For reactive UI updates in React, use the `useAgentForHuman` hook from the separate
+[`@connectonion/react`](https://github.com/openonion/connectonion-react) package
+(`npm install @connectonion/react connectonion`):
 
 ```tsx
-import { useAgentForHuman } from 'connectonion/react';
+import { useAgentForHuman } from '@connectonion/react';
 
 function ChatUI({ sessionId }: { sessionId: string }) {
   const { ui, status, input, isProcessing } = useAgentForHuman('0x...', { sessionId });
@@ -267,7 +269,7 @@ agent.status  // 'idle' | 'working' | 'waiting'
 
 ```tsx
 // React (reactive)
-import { useAgentForHuman } from 'connectonion/react';
+import { useAgentForHuman } from '@connectonion/react';
 
 const { ui, status, input, isProcessing } = useAgentForHuman('0x...', { sessionId });
 // ui and status auto-update, triggering re-renders

@@ -1,14 +1,14 @@
 /**
  * @purpose React hook for voice recording and transcription
  * @llm-note
- *   Dependencies: imports from [react, ../transcribe] | imported by [src/react/index.ts]
+ *   Dependencies: imports from [react, connectonion/transcribe] | imported by [src/index.ts]
  *   Data flow: user triggers recording → MediaRecorder captures audio → stops → transcribe() API call → returns text
  *   State/Effects: manages recording state, MediaRecorder refs, transcription status
  *   Integration: exposes useVoiceInput(options?) hook with startRecording, stopRecording, status, text, duration
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { transcribe } from '../transcribe'
+import { transcribe } from 'connectonion/transcribe'
 
 export type VoiceInputStatus = 'idle' | 'recording' | 'transcribing' | 'error'
 

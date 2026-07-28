@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.tsbuildinfo
+*.log
+.DS_Store
+.env
+package-lock.json
+
+# The repo root ignores *.js wholesale (it only ever holds compiled output there).
+# This package's jest config is hand-written source, so opt it back in.
+!jest.config.js

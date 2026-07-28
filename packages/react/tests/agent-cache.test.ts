@@ -5,7 +5,7 @@
  * connect() builds a RemoteAgent but does NOT open a WebSocket until input()/reconnect(),
  * so these tests exercise the cache/LRU purely in memory — no real network.
  */
-import { acquireAgent, dropAgent, _clearAgentCache, MAX_LIVE_AGENTS } from '../src/react/agent-cache';
+import { acquireAgent, dropAgent, _clearAgentCache, MAX_LIVE_AGENTS } from '../src/agent-cache';
 
 const ADDR = '0x' + 'a'.repeat(64);
 

@@ -4,7 +4,9 @@ module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   setupFiles: ['<rootDir>/tests/setup.ts'],
-  testPathIgnorePatterns: ['/node_modules/', '/dist/', '/tests/e2e/'],
+  // packages/ holds @connectonion/react — its own package with its own jest run,
+  // staged here only until it moves to its own repo.
+  testPathIgnorePatterns: ['/node_modules/', '/dist/', '/tests/e2e/', '/packages/'],
   transform: {
     '^.+\\.tsx?$': ['ts-jest', { tsconfig: { rootDir: '.', noUnusedLocals: false, noUnusedParameters: false } }],
   },

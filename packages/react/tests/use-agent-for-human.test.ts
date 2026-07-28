@@ -1,7 +1,5 @@
 /**
- * @jest-environment jsdom
- *
- * Tests for connectonion/react hooks.
+ * Tests for the @connectonion/react hooks.
  *
  * Tests cover:
  * - useAgentForHuman(address, sessionId) hook initialization
@@ -12,10 +10,10 @@
  */
 
 import { renderHook, act } from '@testing-library/react';
-import { useAgentForHuman } from '../src/react';
+import { useAgentForHuman } from '../src';
 
 // Mock address module to skip signing
-jest.mock('../src/address', () => ({
+jest.mock('connectonion/address', () => ({
   generate: () => ({ address: '0xmock', privateKey: new Uint8Array(64), publicKey: new Uint8Array(32) }),
   generateBrowser: () => ({ address: '0xmock', privateKey: new Uint8Array(64), publicKey: new Uint8Array(32) }),
   load: () => null,
@@ -96,8 +94,8 @@ const DynamicWS = new Proxy(MockWebSocket, {
 });
 
 // Mock connect() to inject test WebSocket
-jest.mock('../src/connect', () => {
-  const actual = jest.requireActual('../src/connect');
+jest.mock('connectonion/connect', () => {
+  const actual = jest.requireActual('connectonion/connect');
   return {
     ...actual,
     connect: (address: string) => new actual.RemoteAgent(address, {
@@ -307,7 +305,7 @@ describe('useAgentForHuman hook', () => {
   });
 
   describe('sanitizeForPersistence', () => {
-    const { sanitizeForPersistence } = require('../src/react/store');
+    const { sanitizeForPersistence } = require('../src/store');
 
     it('strips data URLs but passes Dates and class instances through untouched', () => {
       const createdAt = new Date('2026-01-01');
@@ -326,7 +324,7 @@ describe('useAgentForHuman hook', () => {
   });
 
   describe('pruneOldSessions', () => {
-    const { pruneOldSessions, MAX_PERSISTED_SESSIONS } = require('../src/react/store');
+    const { pruneOldSessions, MAX_PERSISTED_SESSIONS } = require('../src/store');
 
     const seed = (id: number, updatedAt: number) => {
       mockLocalStorage.setItem(
@@ -445,7 +443,7 @@ describe('useAgentForHuman hook', () => {
 
 describe('isEventType helper', () => {
   it('narrows user event type', () => {
-    const { isEventType } = require('../src/react');
+    const { isEventType } = require('../src');
     const event = { id: '1', type: 'user', content: 'Hello' };
     if (isEventType(event, 'user')) {
       expect(event.content).toBe('Hello');
@@ -453,7 +451,7 @@ describe('isEventType helper', () => {
   });
 
   it('narrows tool_call event type', () => {
-    const { isEventType } = require('../src/react');
+    const { isEventType } = require('../src');
     const event = { id: '1', type: 'tool_call', name: 'search', status: 'done', result: 'found' };
     if (isEventType(event, 'tool_call')) {
       expect(event.name).toBe('search');
@@ -463,7 +461,7 @@ describe('isEventType helper', () => {
 });
 
 describe('createResilientLocalStorage (quota handling)', () => {
-  const { createResilientLocalStorage } = require('../src/react/store');
+  const { createResilientLocalStorage } = require('../src/store');
 
   // localStorage mock with a byte budget: setItem throws QuotaExceededError
   // (like a real browser) when the total stored size would exceed `budget`.

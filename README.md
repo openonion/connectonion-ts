@@ -49,6 +49,10 @@ yarn add connectonion
 pnpm add connectonion
 ```
 
+**Building a React app?** The hooks (`useAgentForHuman`, `useVoiceInput`) live in a separate
+package as of `0.2.0` — install [`@connectonion/react`](https://www.npmjs.com/package/@connectonion/react)
+alongside this one. See [React hooks](#-react-hooks) below.
+
 ### 2. Connect to a Python Agent
 ```typescript
 import { connect } from 'connectonion';
@@ -183,11 +187,33 @@ const [analysis, sentiment, objects] = await Promise.all([
 ]);
 ```
 
+## ⚛️ React Hooks
+
+React hooks ship as their own package, **[`@connectonion/react`](https://www.npmjs.com/package/@connectonion/react)**:
+
+```bash
+npm install @connectonion/react connectonion
+```
+
+```tsx
+import { useAgentForHuman } from '@connectonion/react';
+
+const { ui, input, isProcessing } = useAgentForHuman(address, sessionId);
+```
+
+Splitting them out keeps this package free of a React dependency, so Node.js and Electron
+consumers don't carry hooks they never call, and the two release on their own cadence.
+
+> **Upgrading from 0.1.x?** The hooks used to be at `connectonion/react`. That subpath is gone
+> in `0.2.0` — install `@connectonion/react` and change the import. Nothing else changed:
+> same signatures, same `localStorage` keys.
+
 ## 📚 Documentation
 
 - **[Getting Started Guide](docs/getting-started.md)** - Complete setup walkthrough
 - **[Connect API](docs/connect.md)** - Remote agent connection details
 - **[API Reference](docs/api.md)** - Full API documentation
+- **[React hooks](https://github.com/openonion/connectonion-react)** - `@connectonion/react`
 - **[Troubleshooting](docs/troubleshooting.md)** - Common issues & solutions
 
 ### Building Agents in TypeScript (Experimental)

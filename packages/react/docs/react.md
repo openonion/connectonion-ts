@@ -5,15 +5,15 @@ React hooks for connecting to remote AI agents with real-time UI updates.
 ## Installation
 
 ```bash
-npm install connectonion
+npm install @connectonion/react connectonion
 ```
 
-React is a peer dependency - you need React 17+ in your project.
+`react` (17+) and `connectonion` are peer dependencies — install them alongside this package.
 
 ## Quick Start
 
 ```tsx
-import { useAgentForHuman } from 'connectonion/react';
+import { useAgentForHuman } from '@connectonion/react';
 
 function ChatBot({ sessionId }: { sessionId: string }) {
   const { ui, status, input, isProcessing } = useAgentForHuman('0x123abc', { sessionId });
@@ -107,7 +107,7 @@ When a tool completes, its result is merged into the existing event (no duplicat
 ### Type-Safe Event Rendering
 
 ```tsx
-import { isEventType, UIEvent } from 'connectonion/react';
+import { isEventType, UIEvent } from '@connectonion/react';
 
 function EventRenderer({ event }: { event: UIEvent }) {
   if (isEventType(event, 'user')) {
@@ -268,7 +268,7 @@ that list is still loading. See the reference implementation in
 ### Basic Chat Interface
 
 ```tsx
-import { useAgentForHuman } from 'connectonion/react';
+import { useAgentForHuman } from '@connectonion/react';
 
 function Chat({ sessionId }: { sessionId: string }) {
   const { ui, input, isProcessing, reset } = useAgentForHuman('0x123abc', { sessionId });
@@ -312,7 +312,7 @@ function Chat({ sessionId }: { sessionId: string }) {
 ### With Signing Keys (Strict Trust)
 
 ```tsx
-import { useAgentForHuman } from 'connectonion/react';
+import { useAgentForHuman } from '@connectonion/react';
 import { address } from 'connectonion';
 
 function SecureAgent({ sessionId }: { sessionId: string }) {
@@ -365,7 +365,7 @@ import type {
   ConnectOptions,
   UseAgentForHumanOptions,
   UseAgentForHumanReturn,
-} from 'connectonion/react';
+} from '@connectonion/react';
 ```
 
 ## Server-Side Rendering (SSR)

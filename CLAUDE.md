@@ -8,6 +8,30 @@ ConnectOnion TypeScript SDK - A framework for creating AI agents with behavior t
 
 **Core Philosophy**: "Keep simple things simple, make complicated things possible"
 
+### Two packages
+
+As of `0.2.0` the React layer is its own package. This repo publishes **`connectonion`** —
+agent, LLM providers, tools, trust, and `connect()`. It has no React dependency.
+
+**`@connectonion/react`** (`useAgentForHuman`, `useVoiceInput`, the Zustand session store)
+lives in `packages/react/`. That directory is a **self-contained package staged for extraction
+into `openonion/connectonion-react`** — it has its own `package.json`, `tsconfig.json`,
+`jest.config.js`, and `.github/workflows/`, and it consumes the core package by name
+(`connectonion/connect`, `connectonion/transcribe`, `connectonion/address-browser`), never by
+relative path. Nothing in `src/` imports from it.
+
+Working in `packages/react/`? `cd` into it first — it has its own `npm install`, `npm test`,
+and `npm run build`. Its `connectonion` devDependency is `file:../..`, so build the core
+package before installing.
+
+To extract it once the repo exists:
+
+```bash
+git subtree split --prefix=packages/react -b react-split
+# push react-split to the new repo's main, then in packages/react/package.json
+# change "connectonion": "file:../.." to a published version, and delete packages/ here
+```
+
 ## Development Commands
 
 ### Build & Test
@@ -80,7 +104,7 @@ npm run test:watch
 
 4. **Session**: Two-layer architecture
    - **Base RemoteAgent** (`connect()`): In-memory only, lost on process restart
-   - **React hook** (`useAgentForHuman()`): Auto-persists to localStorage via Zustand, keyed by `co:agent:{address}:session:{sessionId}`
+   - **React hook** (`useAgentForHuman()`, in `@connectonion/react`): Auto-persists to localStorage via Zustand, keyed by `co:agent:{address}:session:{sessionId}`
    - Server sends session state with every streaming event; client syncs it
    - Local Agent: inspect via `agent.getSession()`
 
@@ -203,6 +227,20 @@ examples/
 ├── basic-agent.ts        # Simple agent example
 ├── class-tools.ts        # Class-based tools example
 └── test-migrations.ts    # Migration examples
+
+packages/react/           # @connectonion/react — its own package, staged for extraction
+├── package.json          #   own deps, scripts, version; NOT a workspace of the root
+├── tsconfig.json         #   moduleResolution: node16, so connectonion's exports map resolves
+├── jest.config.js        #   jsdom
+├── .github/workflows/    #   ci.yml + publish.yml for the future standalone repo
+├── docs/react.md
+├── src/
+│   ├── index.ts              # Public API of @connectonion/react
+│   ├── use-agent-for-human.ts
+│   ├── useVoiceInput.ts
+│   ├── store.ts              # Zustand + localStorage session persistence
+│   └── agent-cache.ts        # Bounded LRU of live RemoteAgents
+└── tests/
 ```
 
 ## TypeScript Configuration
@@ -221,7 +259,7 @@ The default model is Anthropic Claude Sonnet 3.5 (`claude-3-5-sonnet-20241022`),
 ### Conversation Persistence
 - **Local Agent**: `this.messages` persists across `input()` calls in memory. Call `resetConversation()` to start fresh.
 - **RemoteAgent** (`connect()`): `currentSession` synced from server on each streaming event, kept in memory only.
-- **React hook** (`useAgentForHuman()`): Session auto-persists to localStorage via Zustand by `sessionId`. Survives browser refresh. Call `reset()` to clear.
+- **React hook** (`useAgentForHuman()`, `@connectonion/react`): Session auto-persists to localStorage via Zustand by `sessionId`. Survives browser refresh. Call `reset()` to clear.
 
 ### Tool Parameter Mapping
 Tools receive named arguments as objects, but functions expect positional parameters. The tool system maps `args: {a: 1, b: 2}` to `func(1, 2)` using parameter order from the function signature.

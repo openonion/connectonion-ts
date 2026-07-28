@@ -28,3 +28,34 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # @connectonion/react is staged in packages/react until it moves to its own repo.
+  # It has its own deps and jest run, and it consumes this package through its
+  # `exports` map — so build core first, then check the package against it.
+  react-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install and build core
+        run: npm install && npm run build
+
+      - name: Install react package
+        working-directory: packages/react
+        run: npm install
+
+      - name: Type-check
+        working-directory: packages/react
+        run: npx tsc --noEmit
+
+      - name: Test
+        working-directory: packages/react
+        run: npx jest
+
+      - name: Build
+        working-directory: packages/react
+        run: npm run build

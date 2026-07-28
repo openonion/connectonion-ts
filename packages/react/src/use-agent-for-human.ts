@@ -1,6 +1,6 @@
 /**
  * @llm-note
- *   Dependencies: imports from [react, src/react/agent-cache (acquireAgent/dropAgent), src/react/store] | imported by [src/react/index.ts]
+ *   Dependencies: imports from [react, src/agent-cache (acquireAgent/dropAgent), src/store] | imported by [src/index.ts]
  *   Data flow: hook gets one RemoteAgent per address:sessionId from the live-connection cache → agent.onMessage flushes ui/status/session/error into the zustand store → React re-renders from the store
  *   State/Effects: reuses the cached live RemoteAgent across session switches (agent-cache, bounded LRU) | persists session via the store | input() is fire-and-forget (errors surface via agent.error in the flush)
  *   Integration: exposes useAgentForHuman(address, options) returning {ui, status, input, reconnect, send, reset, ...}
@@ -14,7 +14,8 @@ import {
   ApprovalMode,
   OutgoingMessage,
   RemoteSessionStatus,
-} from '../connect';
+  FileAttachment,
+} from 'connectonion/connect';
 import { acquireAgent, dropAgent } from './agent-cache';
 import { getStore, type Message } from './store';
 
@@ -89,7 +90,7 @@ export interface UseAgentForHumanReturn {
    * @param options.images - Base64-encoded images to attach to the message
    * @param options.files - File attachments with name, type, size, and dataUrl
    */
-  input: (prompt: string, options?: { images?: string[]; files?: import('../connect/types').FileAttachment[] }) => void;
+  input: (prompt: string, options?: { images?: string[]; files?: FileAttachment[] }) => void;
 
   /**
    * Open the WebSocket without sending input, so a landing/draft view receives the
@@ -275,7 +276,7 @@ export function useAgentForHuman(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
-  const input = (prompt: string, options?: { images?: string[]; files?: import('../connect/types').FileAttachment[] }) => {
+  const input = (prompt: string, options?: { images?: string[]; files?: FileAttachment[] }) => {
     setError(null);
 
     // Merge session before dispatching: the agent may have received a mode change via

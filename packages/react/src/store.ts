@@ -1,7 +1,7 @@
 /**
  * @purpose Zustand store factory for per-session agent state, persisted to localStorage
  * @llm-note
- *   Dependencies: imports from [zustand, zustand/middleware, src/connect/types (ChatItem, AgentStatus, SessionState)] | imported by [src/react/index.ts]
+ *   Dependencies: imports from [zustand, zustand/middleware, connectonion/connect (ChatItem, AgentStatus, SessionState)] | imported by [src/index.ts]
  *   Data flow: getStore(address, sessionId) → prunes old sessions → creates or retrieves cached zustand store → persisted to localStorage as co:agent:{address}:session:{sessionId}
  *   State/Effects: storeCache (module-level Map) prevents duplicate stores | each store persists messages, ui, session, timestamps to localStorage via zustand/persist | persisted state is sanitized: base64 data URLs are stripped (screenshots would blow the ~5MB localStorage quota); live images survive in memory and replays re-fetch from the server | at most MAX_PERSISTED_SESSIONS (20) sessions are kept — opening a session prunes the least-recently-updated, since the server is the source of truth
  *   Integration: exposes getStore(), Message, AgentState, AgentActions, AgentStore types
@@ -10,7 +10,7 @@
 
 import { create, StoreApi, UseBoundStore } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import type { ChatItem, AgentStatus, SessionState } from '../connect';
+import type { ChatItem, AgentStatus, SessionState } from 'connectonion/connect';
 
 // =============================================================================
 // Types

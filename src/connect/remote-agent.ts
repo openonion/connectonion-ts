@@ -60,6 +60,9 @@ export class RemoteAgent {
   _chatItems: ChatItem[] = [];
   _error: Error | null = null;
 
+  // Latest dashboard.html snapshot pushed by the Host (on connect + after each run).
+  _dashboardHtml: string | null = null;
+
   // Persistent WebSocket
   private _ws: WebSocketLike | null = null;
   private _authenticated = false;
@@ -82,6 +85,14 @@ export class RemoteAgent {
   private _connectReject: ((reason?: unknown) => void) | null = null;
   private _connectTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // In-flight connect attempt. The `_ws && _authenticated` fast path only covers a
+  // *finished* connect, so without this a second caller during the (up to 30s)
+  // CONNECT window would open a second WebSocket and overwrite _ws plus
+  // _connectResolve/_connectReject/_connectTimer — orphaning the first caller's
+  // promise and leaking the first socket and its ping monitor. Cleared when the
+  // attempt settles so a failed connect can be retried.
+  private _connecting: Promise<void> | null = null;
+
   _onMessage: (() => void) | null = null;
   set onMessage(fn: (() => void) | null) { this._onMessage = fn; }
 
@@ -102,8 +113,29 @@ export class RemoteAgent {
   get ui(): ChatItem[] { return this._chatItems; }
   get mode(): ApprovalMode { return this._currentSession?.mode || 'safe'; }
   get error(): Error | null { return this._error || null; }
+  get dashboardHtml(): string | null { return this._dashboardHtml; }
 
   // --- Public API ---
+
+  /**
+   * Open the authenticated WebSocket without sending input. Lets a landing/draft
+   * view receive the Host's on-connect DASHBOARD_SNAPSHOT before the first input().
+   * Idempotent — a no-op if already connected, and concurrent calls share the one
+   * in-flight handshake rather than racing to open a second socket. On failure the
+   * error is stored on the agent and flushed to subscribers before rethrowing.
+   */
+  async connect(): Promise<void> {
+    try {
+      await this._ensureConnected();
+    } catch (err) {
+      // Mirror input()'s failure handling: fire-and-forget callers (the React hook)
+      // only observe state through onMessage, so without this an eager connect
+      // fails completely silently — no error, no state change, nothing to retry on.
+      this._error = err instanceof Error ? err : new Error(String(err));
+      this._onMessage?.();
+      throw err;
+    }
+  }
 
   async input(prompt: string, options?: { images?: string[]; files?: import('./types').FileAttachment[] }): Promise<Response> {
     this._addChatItem({ type: 'user', content: prompt, images: options?.images, files: options?.files });
@@ -390,8 +422,23 @@ export class RemoteAgent {
 
   // --- Private: connection lifecycle ---
 
-  private async _ensureConnected(): Promise<void> {
-    if (this._ws && this._authenticated) return;
+  private _ensureConnected(): Promise<void> {
+    if (this._ws && this._authenticated) return Promise.resolve();
+    if (this._connecting) return this._connecting;
+
+    const attempt = this._doConnect();
+    this._connecting = attempt;
+    // Clear on settle either way (both branches handled, so this derived promise
+    // never surfaces as an unhandled rejection — `attempt` is what callers await).
+    const clear = () => { if (this._connecting === attempt) this._connecting = null; };
+    attempt.then(clear, clear);
+    return attempt;
+  }
+
+  private async _doConnect(): Promise<void> {
+    // A socket left over from a failed attempt is dead weight: _authenticated is
+    // false, so nothing can use it, and overwriting _ws below would leak it.
+    if (this._ws && !this._authenticated) this._closeWs();
 
     this._keys = ensureKeys(this._keys);
     await this._resolveEndpointOnce();
@@ -628,6 +675,14 @@ export class RemoteAgent {
       });
     }
 
+    // DASHBOARD_SNAPSHOT — full dashboard.html, pushed on connect and after each run.
+    // Store it and fall through to the tail flush so subscribers re-render.
+    // A malformed frame is ignored, not treated as "no dashboard" — clearing here
+    // would blank an already-rendered dashboard on one bad push.
+    if (data?.type === 'DASHBOARD_SNAPSHOT' && typeof data.html === 'string') {
+      this._dashboardHtml = data.html;
+    }
+
     // OUTPUT — resolve input() promise
     if (data?.type === 'OUTPUT') {
       this._clearPlaceholder();
@@ -670,6 +725,22 @@ export class RemoteAgent {
     this._onMessage?.();
   }
 
+  /**
+   * Settle an in-flight CONNECT and cancel its deadline.
+   *
+   * Cancelling matters as much as rejecting: an orphaned 30s timer fires long after
+   * its own attempt is over and nulls `_connectResolve`/`_connectReject`, which by
+   * then may belong to a *newer* attempt — leaving that one unable to resolve when
+   * CONNECTED arrives.
+   */
+  private _settleConnect(err?: Error): void {
+    if (this._connectTimer) { clearTimeout(this._connectTimer); this._connectTimer = null; }
+    const reject = this._connectReject;
+    this._connectResolve = null;
+    this._connectReject = null;
+    if (err) reject?.(err);
+  }
+
   private _handleConnectionLoss(): void {
     this._ws = null;
     this._authenticated = false;
@@ -678,10 +749,7 @@ export class RemoteAgent {
 
     // Reject pending connect
     if (this._connectReject) {
-      const reject = this._connectReject;
-      this._connectResolve = null;
-      this._connectReject = null;
-      reject(new Error('Connection lost during authentication'));
+      this._settleConnect(new Error('Connection lost during authentication'));
       return;
     }
 
@@ -704,6 +772,10 @@ export class RemoteAgent {
 
   private _closeWs(): void {
     this._stopPingMonitor();
+    // An intentional close during the handshake must fail that handshake now. The
+    // socket's onclose is detached below, so nothing else would ever settle it, and
+    // _ensureConnected would keep handing the stale promise to every later caller.
+    this._settleConnect(new Error('Connection closed during authentication'));
     if (this._ws) {
       // Prevent close handler from firing during intentional close
       this._ws.onerror = null;

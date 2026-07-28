@@ -5,7 +5,7 @@
  *   State/Effects: reuses the cached live RemoteAgent across session switches (agent-cache, bounded LRU) | persists session via the store | input() is fire-and-forget (errors surface via agent.error in the flush)
  *   Integration: exposes useAgentForHuman(address, options) returning {ui, status, input, reconnect, send, reset, ...}
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ChatItem,
   AgentStatus,
@@ -56,6 +56,12 @@ export interface UseAgentForHumanReturn {
   error: Error | null;
 
   /**
+   * Latest `dashboard.html` snapshot the Host pushed over this connection
+   * (on connect and after each run). `null` until the first snapshot arrives.
+   */
+  dashboardHtml: string | null;
+
+  /**
    * Check whether a specific session is alive on the relay server.
    * The caller decides when and how often to invoke this — no built-in interval.
    *
@@ -84,6 +90,14 @@ export interface UseAgentForHumanReturn {
    * @param options.files - File attachments with name, type, size, and dataUrl
    */
   input: (prompt: string, options?: { images?: string[]; files?: import('../connect/types').FileAttachment[] }) => void;
+
+  /**
+   * Open the WebSocket without sending input, so a landing/draft view receives the
+   * Host's on-connect DASHBOARD_SNAPSHOT before the first message. Idempotent, and
+   * safe to call concurrently. Stable across renders, so it can go in an effect's
+   * dependency array. Failures land in `error`.
+   */
+  connect: () => void;
 
   /**
    * Send a typed message to the agent over the WebSocket.
@@ -183,6 +197,9 @@ export function useAgentForHuman(
   // connectionState is initialized from the agent and then kept in sync via onMessage.
   const [connectionState, setConnectionState] = useState<ConnectionState>(agent.connectionState);
 
+  // Latest dashboard.html snapshot the Host pushed over this connection.
+  const [dashboardHtml, setDashboardHtml] = useState<string | null>(agent.dashboardHtml);
+
   // Register a single onMessage callback for the lifetime of this agent instance.
   // This replaces a polling interval: every streaming event from the server triggers
   // one synchronous flush of all derived state into React/Zustand.
@@ -191,6 +208,7 @@ export function useAgentForHuman(
       setUI([...agent.ui]);
       setStatus(agent.status);
       setConnectionState(agent.connectionState);
+      setDashboardHtml(agent.dashboardHtml);
       if (agent.error) setError(agent.error);
       if (agent.currentSession) {
         setSession(agent.currentSession);
@@ -296,6 +314,16 @@ export function useAgentForHuman(
     agent.reconnect(sessionId);  // non-blocking — updates come via onMessage
   };
 
+  // Open the WebSocket without sending input, so a landing/draft view receives the
+  // Host's on-connect DASHBOARD_SNAPSHOT before the first message. Idempotent.
+  // Memoized on the agent identity: callers put this in an effect's dep array, and a
+  // fresh closure per render would re-run that effect on every render.
+  const connect = useCallback(() => {
+    // Errors are surfaced on the agent (error state + onMessage flush) by connect();
+    // caught here only to avoid an unhandled rejection on this fire-and-forget call.
+    agent.connect().catch(() => {});
+  }, [agent]);
+
   const reset = () => {
     agent.reset();          // closes this session's WebSocket + clears agent state
     dropAgent(address, sessionId);  // forget the now-closed agent so a re-acquire is fresh
@@ -329,11 +357,13 @@ export function useAgentForHuman(
     sessionId,
     isProcessing: status !== 'idle',
     error,
+    dashboardHtml,
     checkSessionStatus: (sid: string) => agent.checkSessionStatus(sid),
     mode: session?.mode || 'safe',
     ulwTurns: session?.ulw_turns ?? null,
     ulwTurnsUsed: session?.ulw_turns_used ?? null,
     input,
+    connect,
     sendMessage,
     signOnboard: (options: { inviteCode?: string; payment?: number }) => agent.signOnboard(options),
     setMode,

@@ -725,6 +725,22 @@ export class RemoteAgent {
     this._onMessage?.();
   }
 
+  /**
+   * Settle an in-flight CONNECT and cancel its deadline.
+   *
+   * Cancelling matters as much as rejecting: an orphaned 30s timer fires long after
+   * its own attempt is over and nulls `_connectResolve`/`_connectReject`, which by
+   * then may belong to a *newer* attempt — leaving that one unable to resolve when
+   * CONNECTED arrives.
+   */
+  private _settleConnect(err?: Error): void {
+    if (this._connectTimer) { clearTimeout(this._connectTimer); this._connectTimer = null; }
+    const reject = this._connectReject;
+    this._connectResolve = null;
+    this._connectReject = null;
+    if (err) reject?.(err);
+  }
+
   private _handleConnectionLoss(): void {
     this._ws = null;
     this._authenticated = false;
@@ -733,10 +749,7 @@ export class RemoteAgent {
 
     // Reject pending connect
     if (this._connectReject) {
-      const reject = this._connectReject;
-      this._connectResolve = null;
-      this._connectReject = null;
-      reject(new Error('Connection lost during authentication'));
+      this._settleConnect(new Error('Connection lost during authentication'));
       return;
     }
 
@@ -759,6 +772,10 @@ export class RemoteAgent {
 
   private _closeWs(): void {
     this._stopPingMonitor();
+    // An intentional close during the handshake must fail that handshake now. The
+    // socket's onclose is detached below, so nothing else would ever settle it, and
+    // _ensureConnected would keep handing the stale promise to every later caller.
+    this._settleConnect(new Error('Connection closed during authentication'));
     if (this._ws) {
       // Prevent close handler from firing during intentional close
       this._ws.onerror = null;

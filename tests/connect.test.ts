@@ -1375,7 +1375,9 @@ describe('interactive events', () => {
     }
 
     const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: OnboardWS as any });
-    agent.input('hello');
+    // The onboard gate deliberately leaves the CONNECT pending while a human types an
+    // invite code, and reset() below tears that down — so this input() rejects.
+    agent.input('hello').catch(() => {});
     await new Promise(resolve => setTimeout(resolve, 50));
 
     expect(agent.status).toBe('waiting');
@@ -1575,6 +1577,28 @@ describe('connect() concurrency and failure handling', () => {
 
     expect(stale.close).toHaveBeenCalled();
     expect((agent as any)._ws).not.toBe(stale);
+    agent.reset();
+  });
+
+  it('reset() during an in-flight connect does not wedge later connects', async () => {
+    // Tearing down mid-handshake detaches the socket's onclose, so nothing else would
+    // ever settle that promise — and _ensureConnected hands the in-flight one to every
+    // later caller. Without cancelling it here, the next connect() waits out the 30s
+    // auth deadline instead of dialing again.
+    class SilentWS extends MockWebSocket {
+      send(_data: unknown): void { /* never answers CONNECT */ }
+    }
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: SilentWS as any });
+    agent.connect().catch(() => {});
+    await new Promise((r) => setTimeout(r, 10));
+
+    agent.reset();
+
+    const outcome = await Promise.race([
+      agent.connect().then(() => 'settled', () => 'settled'),
+      new Promise((r) => setTimeout(() => r('hung'), 500)),
+    ]);
+    expect(outcome).toBe('settled');
     agent.reset();
   });
 

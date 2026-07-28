@@ -52,6 +52,50 @@ describe('fetchAgentInfo', () => {
     });
   });
 
+  it('surfaces the balance a managed-key agent published', async () => {
+    global.fetch = jest.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url === `https://oo.openonion.ai/api/agents/${ADDRESS}`) {
+        return {
+          ok: true,
+          json: async () => ({
+            endpoints: ['http://10.0.0.2:8000'],
+            relay: 'wss://oo.openonion.ai',
+            last_seen: '2026-06-01T00:00:00Z',
+            profile: { alias: 'oo', model: 'co/test-model', balance_usd: 4.22 },
+          }),
+        };
+      }
+      throw new Error('direct endpoint is unreachable from browser');
+    }) as unknown as typeof fetch;
+
+    const info = await fetchAgentInfo(ADDRESS);
+
+    expect(info.balance_usd).toBe(4.22);
+  });
+
+  it('leaves balance undefined when the agent did not publish one', async () => {
+    global.fetch = jest.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url === `https://oo.openonion.ai/api/agents/${ADDRESS}`) {
+        return {
+          ok: true,
+          json: async () => ({
+            endpoints: ['http://10.0.0.2:8000'],
+            relay: 'wss://oo.openonion.ai',
+            last_seen: '2026-06-01T00:00:00Z',
+            profile: { alias: 'oo', model: 'gpt-4o' },
+          }),
+        };
+      }
+      throw new Error('direct endpoint is unreachable from browser');
+    }) as unknown as typeof fetch;
+
+    const info = await fetchAgentInfo(ADDRESS);
+
+    expect(info.balance_usd).toBeUndefined();
+  });
+
   it('marks stale DB records offline but keeps the published name', async () => {
     global.fetch = jest.fn(async (input) => {
       const url = String(input);

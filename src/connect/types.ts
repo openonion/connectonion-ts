@@ -78,6 +78,10 @@ export interface AgentInfo {
   trust?: string;
   version?: string;
   model?: string;
+  /** Agent's OpenOnion account balance in USD. Present only for co/* managed-key
+   *  agents that published it (clients can't fetch it themselves — it's gated by
+   *  the agent's private key). A startup snapshot, not a live figure. */
+  balance_usd?: number;
   accepted_inputs?: AgentAcceptedInputs;
   online: boolean;
 }

@@ -7,6 +7,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  AgentInfo,
   ChatItem,
   AgentStatus,
   ConnectionState,
@@ -60,6 +61,15 @@ export interface UseAgentForHumanReturn {
    * (on connect and after each run). `null` until the first snapshot arrives.
    */
   dashboardHtml: string | null;
+
+  /**
+   * The agent's full self-description — name, model, tools, every skill, balance —
+   * pushed by the Host once the connection is authenticated. `null` until then, which
+   * is the correct state to render for a viewer who has not passed the trust gate:
+   * the public `/info` answer is deliberately narrower. Prefer this over
+   * `fetchAgentInfo()` once connected.
+   */
+  profile: AgentInfo | null;
 
   /**
    * Check whether a specific session is alive on the relay server.
@@ -200,6 +210,10 @@ export function useAgentForHuman(
   // Latest dashboard.html snapshot the Host pushed over this connection.
   const [dashboardHtml, setDashboardHtml] = useState<string | null>(agent.dashboardHtml);
 
+  // Authenticated agent profile — arrives right after CONNECTED, so a cached agent
+  // already holds it and a cold one fills it in on the next flush.
+  const [profile, setProfile] = useState<AgentInfo | null>(agent.profile);
+
   // Register a single onMessage callback for the lifetime of this agent instance.
   // This replaces a polling interval: every streaming event from the server triggers
   // one synchronous flush of all derived state into React/Zustand.
@@ -209,6 +223,7 @@ export function useAgentForHuman(
       setStatus(agent.status);
       setConnectionState(agent.connectionState);
       setDashboardHtml(agent.dashboardHtml);
+      setProfile(agent.profile);
       if (agent.error) setError(agent.error);
       if (agent.currentSession) {
         setSession(agent.currentSession);
@@ -227,6 +242,8 @@ export function useAgentForHuman(
     //    now without needing the user to send another message. Skip the full flush on a
     //    cold agent (empty ui) so we don't clobber the store localStorage just hydrated.
     setConnectionState(agent.connectionState);
+    // Same reason, and equally safe on a cold agent: neither touches the store.
+    setProfile(agent.profile);
     if (agent.ui.length > 0) flush();
 
     return () => { agent.onMessage = null; };
@@ -358,6 +375,7 @@ export function useAgentForHuman(
     isProcessing: status !== 'idle',
     error,
     dashboardHtml,
+    profile,
     checkSessionStatus: (sid: string) => agent.checkSessionStatus(sid),
     mode: session?.mode || 'safe',
     ulwTurns: session?.ulw_turns ?? null,

@@ -29,6 +29,10 @@
  *   send INPUT {input_id, prompt} ──► streaming events (thinking/tool_call/agent_image/
  *   ask_user/...) mapped into _chatItems ──► OUTPUT resolves input()
  *
+ *   Right after CONNECTED the Host also pushes AGENT_PROFILE (the authenticated
+ *   answer to "who are you" — every skill, not the public subset /info returns)
+ *   and DASHBOARD_SNAPSHOT. Both land on the agent as `profile` / `dashboardHtml`.
+ *
  *   Failure paths: ws error/close or 60s ping silence → _handleConnectionLoss →
  *   rejects pending connect/input; ERROR frame → _error set, input() rejected.
  *   reconnect(sessionId) is the same shape but sends CONNECT with the stored
@@ -36,10 +40,12 @@
  */
 import * as address from '../address';
 import {
-  AgentStatus, ApprovalMode, ChatItem, ChatItemType, ConnectionState,
+  AgentInfo, AgentStatus, ApprovalMode, ChatItem, ChatItemType, ConnectionState,
   ConnectOptions, RemoteSessionStatus, ResolvedEndpoint, Response, SessionState, WebSocketCtor, WebSocketLike,
 } from './types';
-import { getWebSocketCtor, generateUUID, normalizeRelayUrl, resolveEndpoint } from './endpoint';
+import {
+  AgentInfoSource, getWebSocketCtor, generateUUID, normalizeRelayUrl, resolveEndpoint, toAgentInfo,
+} from './endpoint';
 import { ensureKeys, signPayload } from './auth';
 import { mapEventToChatItem } from './chat-item-mapper';
 
@@ -62,6 +68,14 @@ export class RemoteAgent {
 
   // Latest dashboard.html snapshot pushed by the Host (on connect + after each run).
   _dashboardHtml: string | null = null;
+
+  // The agent's own account of itself, pushed once right after CONNECTED.
+  // This is the *authenticated* answer: /info and the relay directory are open to
+  // anyone who can reach the agent, so they publish a filtered subset (project-tree
+  // skills only). This frame arrives past the signature check and the trust gate,
+  // so it carries the full picture — every skill, the model, the balance. Null until
+  // it lands, which is also the honest state for an unauthenticated viewer.
+  _profile: AgentInfo | null = null;
 
   // Persistent WebSocket
   private _ws: WebSocketLike | null = null;
@@ -114,6 +128,7 @@ export class RemoteAgent {
   get mode(): ApprovalMode { return this._currentSession?.mode || 'safe'; }
   get error(): Error | null { return this._error || null; }
   get dashboardHtml(): string | null { return this._dashboardHtml; }
+  get profile(): AgentInfo | null { return this._profile; }
 
   // --- Public API ---
 
@@ -673,6 +688,19 @@ export class RemoteAgent {
         level: data.level as string,
         message: data.message as string,
       });
+    }
+
+    // AGENT_PROFILE — the agent's full self-description, pushed once after CONNECTED.
+    // Overwrites rather than merges: this frame is the authenticated source of truth,
+    // and a key it omits (no balance on a bring-your-own-key agent) means absent, not
+    // "keep whatever /info said". Falls through to the tail flush so subscribers
+    // re-render. `online` is true by construction — we are talking to it.
+    if (data?.type === 'AGENT_PROFILE') {
+      this._profile = {
+        ...toAgentInfo(data as AgentInfoSource),
+        address: (typeof data.address === 'string' && data.address) || this.address,
+        online: true,
+      };
     }
 
     // DASHBOARD_SNAPSHOT — full dashboard.html, pushed on connect and after each run.

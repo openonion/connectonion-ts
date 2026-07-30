@@ -1645,3 +1645,85 @@ describe('DASHBOARD_SNAPSHOT resilience', () => {
     agent.reset();
   });
 });
+
+describe('AGENT_PROFILE', () => {
+  // Mirrors the Host: CONNECTED, then the authenticated profile frame carrying
+  // skills that /info deliberately withholds (a `user`-location skill).
+  class ProfileWS extends MockWebSocket {
+    send(data: unknown): void {
+      const msg = JSON.parse(String(data));
+      if (msg.type === 'CONNECT') {
+        setTimeout(() => this.onmessage && this.onmessage({
+          data: JSON.stringify({ type: 'CONNECTED', session_id: 'test-session', status: 'new' })
+        }), 0);
+        setTimeout(() => this.onmessage && this.onmessage({
+          data: JSON.stringify({
+            type: 'AGENT_PROFILE',
+            session_id: 'test-session',
+            name: 'oo',
+            address: '0xabc123',
+            model: 'co/gemini-3.6-flash',
+            tools: ['search', 'shell'],
+            skills: [
+              { name: 'co-browser', description: 'drive a browser', location: 'project' },
+              { name: 'private-notes', description: 'personal', location: 'user' },
+            ],
+            balance_usd: 25.3436,
+          })
+        }), 0);
+      }
+    }
+  }
+
+  it('starts with a null profile — an unauthenticated viewer has no answer yet', () => {
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: ProfileWS as any });
+    expect(agent.profile).toBeNull();
+    agent.reset();
+  });
+
+  it('captures the full picture, including skills /info withholds', async () => {
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: ProfileWS as any });
+    let flushed = false;
+    agent.onMessage = () => { flushed = true; };
+    await agent.connect();
+    await new Promise((r) => setTimeout(r, 5));
+
+    expect(agent.profile).toEqual({
+      address: '0xabc123',
+      name: 'oo',
+      model: 'co/gemini-3.6-flash',
+      tools: ['search', 'shell'],
+      skills: [
+        { name: 'co-browser', description: 'drive a browser', location: 'project' },
+        { name: 'private-notes', description: 'personal', location: 'user' },
+      ],
+      balance_usd: 25.3436,
+      online: true,
+    });
+    expect(flushed).toBe(true);
+    agent.reset();
+  });
+
+  it('omits balance for an agent that does not publish one', async () => {
+    class NoBalanceWS extends MockWebSocket {
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'CONNECT') {
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'CONNECTED', session_id: 's', status: 'new' })
+          }), 0);
+          setTimeout(() => this.onmessage && this.onmessage({
+            data: JSON.stringify({ type: 'AGENT_PROFILE', name: 'byok', tools: [], skills: [] })
+          }), 0);
+        }
+      }
+    }
+    const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: NoBalanceWS as any });
+    await agent.connect();
+    await new Promise((r) => setTimeout(r, 5));
+
+    expect(agent.profile).toEqual({ address: '0xabc123', name: 'byok', online: true });
+    expect(agent.profile?.balance_usd).toBeUndefined();
+    agent.reset();
+  });
+});

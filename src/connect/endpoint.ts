@@ -51,9 +51,9 @@ function sortByProximity(endpoints: string[]): string[] {
   });
 }
 
-// Shape shared by a relay-published profile and a direct /info payload
-// (relay profiles use `alias`, direct /info echoes `address`).
-type AgentInfoSource = {
+// Shape shared by a relay-published profile, a direct /info payload, and the
+// AGENT_PROFILE frame (relay profiles use `alias`, the other two echo `address`).
+export type AgentInfoSource = {
   name?: string;
   alias?: string;
   address?: string;
@@ -107,7 +107,9 @@ function normalizeSkills(value: unknown): AgentInfo['skills'] | undefined {
 }
 
 // Only present keys are set, so spreading the result merges cleanly over a base.
-function toAgentInfo(source?: AgentInfoSource | null): Partial<AgentInfo> {
+// Exported so the AGENT_PROFILE frame is normalized by the same code that
+// normalizes /info — three sources, one definition of the shape.
+export function toAgentInfo(source?: AgentInfoSource | null): Partial<AgentInfo> {
   const info: Partial<AgentInfo> = {};
   const name = source?.name || source?.alias;
   const tools = normalizeTools(source?.tools);

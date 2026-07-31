@@ -65,6 +65,7 @@ export {
   fetchAgentInfo,
   AgentInfo,
   AgentAcceptedInputs,
+  AgentOnboard,
   SkillInfo,
 } from './connect';
 export * as address from './address';

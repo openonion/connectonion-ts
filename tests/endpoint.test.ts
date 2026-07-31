@@ -1,4 +1,4 @@
-import { fetchAgentInfo } from '../src/connect/endpoint';
+import { fetchAgentInfo, toAgentInfo } from '../src/connect/endpoint';
 
 const ADDRESS = `0x${'1'.repeat(64)}`;
 
@@ -118,5 +118,29 @@ describe('fetchAgentInfo', () => {
 
     expect(info.online).toBe(false);
     expect(info.name).toBe('oo');
+  });
+});
+
+describe('onboard', () => {
+  it('carries what it takes to talk to this agent', () => {
+    // A client that cannot see this only learns the agent is gated by being
+    // refused — after the reader has typed a message, which is then lost. The
+    // landing page can say so up front, but only if the field survives the trip.
+    const info = toAgentInfo({
+      name: 'naturewill',
+      onboard: { invite_code: true, payment: null },
+    } as never);
+
+    expect(info.onboard).toEqual({ invite_code: true, payment: null });
+  });
+
+  it('says nothing when the agent asks for nothing', () => {
+    // Absent, not `{}` — an open agent must not render an empty gate.
+    expect(toAgentInfo({ name: 'open' }).onboard).toBeUndefined();
+  });
+
+  it('carries a payment price', () => {
+    const info = toAgentInfo({ onboard: { invite_code: false, payment: 5 } } as never);
+    expect(info.onboard).toEqual({ invite_code: false, payment: 5 });
   });
 });

@@ -64,6 +64,7 @@ export type AgentInfoSource = {
   model?: string;
   balance_usd?: number;
   accepted_inputs?: AgentInfo['accepted_inputs'];
+  onboard?: AgentInfo['onboard'];
 };
 
 function normalizeTools(value: unknown): string[] | undefined {
@@ -123,6 +124,7 @@ export function toAgentInfo(source?: AgentInfoSource | null): Partial<AgentInfo>
   if (source?.model) info.model = source.model;
   if (typeof source?.balance_usd === 'number') info.balance_usd = source.balance_usd;
   if (source?.accepted_inputs) info.accepted_inputs = source.accepted_inputs;
+  if (source?.onboard) info.onboard = source.onboard;
 
   return info;
 }

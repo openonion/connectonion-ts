@@ -8,6 +8,7 @@ export type {
   ConnectionState,
   AgentInfo,
   AgentAcceptedInputs,
+  AgentOnboard,
   SkillInfo,
   ApprovalMode,
   OutgoingMessage,

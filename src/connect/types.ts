@@ -83,7 +83,21 @@ export interface AgentInfo {
    *  the agent's private key). A startup snapshot, not a live figure. */
   balance_usd?: number;
   accepted_inputs?: AgentAcceptedInputs;
+  /** What a stranger has to do before this agent will talk to them. Present when
+   *  the agent gates access; absent when anyone may connect.
+   *
+   *  A client that cannot see this only discovers the gate by being refused —
+   *  after the reader has typed a message, which is then lost. Carried so a
+   *  landing page can say so before they type. */
+  onboard?: AgentOnboard;
   online: boolean;
+}
+
+/** How a stranger becomes a contact. `invite_code: true` means a code is accepted;
+ *  `payment` is the price in USD, or null when payment is not an option. */
+export interface AgentOnboard {
+  invite_code?: boolean;
+  payment?: number | null;
 }
 
 export interface ConnectOptions {

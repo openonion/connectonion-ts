@@ -37,7 +37,7 @@ agent.currentSession  // Synced from server on each event (in-memory only)
 agent.ui              // Chat items for rendering
 ```
 
-**Note:** The base `RemoteAgent` does not persist sessions. For localStorage persistence, use the React `useAgentForHuman` hook (see [react.md](./react.md)).
+**Note:** The base `RemoteAgent` does not persist sessions. For localStorage persistence, use the React `useAgentForHuman` hook (see [@connectonion/react](https://github.com/openonion/connectonion-react)).
 
 ## UI Rendering
 
@@ -80,7 +80,7 @@ Server: tool_result {id: '3', result: '...'}      → UI: {id: '3', status: 'don
 For reactive UI updates in React, use the `useAgentForHuman` hook:
 
 ```tsx
-import { useAgentForHuman } from 'connectonion/react';
+import { useAgentForHuman } from '@connectonion/react';
 
 function ChatUI({ sessionId }: { sessionId: string }) {
   const { ui, status, input, isProcessing } = useAgentForHuman('0x...', { sessionId });
@@ -128,9 +128,9 @@ const {
 } = useAgentForHuman('0x...', { sessionId });
 ```
 
-Session auto-persists to localStorage by `sessionId`. See [react.md](./react.md) for details.
+Session auto-persists to localStorage by `sessionId`. See [@connectonion/react](https://github.com/openonion/connectonion-react) for details.
 
-See [react.md](./react.md) for complete React documentation.
+See [@connectonion/react](https://github.com/openonion/connectonion-react) for complete React documentation.
 
 ## Multi-turn Conversations
 
@@ -267,7 +267,7 @@ agent.status  // 'idle' | 'working' | 'waiting'
 
 ```tsx
 // React (reactive)
-import { useAgentForHuman } from 'connectonion/react';
+import { useAgentForHuman } from '@connectonion/react';
 
 const { ui, status, input, isProcessing } = useAgentForHuman('0x...', { sessionId });
 // ui and status auto-update, triggering re-renders

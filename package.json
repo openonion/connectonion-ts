@@ -1,6 +1,6 @@
 {
   "name": "connectonion",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Connect to Python AI agents from TypeScript apps - Use powerful Python agents in your React, Next.js, Node.js, and Electron applications",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -12,6 +12,18 @@
     "./react": {
       "types": "./dist/react/index.d.ts",
       "default": "./dist/react/index.js"
+    },
+    "./connect": {
+      "types": "./dist/connect/index.d.ts",
+      "default": "./dist/connect/index.js"
+    },
+    "./transcribe": {
+      "types": "./dist/transcribe.d.ts",
+      "default": "./dist/transcribe.js"
+    },
+    "./address-browser": {
+      "types": "./dist/address-browser.d.ts",
+      "default": "./dist/address-browser.js"
     },
     "./dist/address-browser": {
       "types": "./dist/address-browser.d.ts",

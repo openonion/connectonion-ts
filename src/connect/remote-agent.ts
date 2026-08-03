@@ -749,8 +749,10 @@ export class RemoteAgent {
       const err = new Error(`Agent error: ${String(data.message || data.error || 'Unknown error')}`);
       this._error = err;
       this._status = 'idle';
-      this._connectionState = 'disconnected';
-      this._closeWs();
+      // Do not close. An ERROR frame is the host answering, not the transport
+      // failing — a refused invite code is the case that matters, and the host
+      // keeps the connection open for a second try. Closing it here sent the
+      // retry into a dead socket and the caller waited forever.
       const reject = this._inputReject;
       this._settleInput();
       reject?.(err);

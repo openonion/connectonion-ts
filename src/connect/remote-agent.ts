@@ -675,6 +675,12 @@ export class RemoteAgent {
         type: 'onboard_required',
         methods: (data.methods || []) as string[],
         paymentAmount: data.payment_amount as number | undefined,
+        // Where to send it. The host publishes this from its own address
+        // (get_onboard_requirements → trust_agent.get_self_address) and the
+        // protocol documents it, but it was being dropped here — so a client
+        // asking a reader to pay could not tell them where, and the payment
+        // branch of the gate was unusable by construction.
+        paymentAddress: data.payment_address as string | undefined,
       });
     }
 

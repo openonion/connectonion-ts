@@ -1367,7 +1367,8 @@ describe('interactive events', () => {
         if (msg.type === 'CONNECT') {
           setTimeout(() => this.onmessage && this.onmessage({
             data: JSON.stringify({
-              type: 'ONBOARD_REQUIRED', methods: ['invite_code', 'payment'], payment_amount: 10
+              type: 'ONBOARD_REQUIRED', methods: ['invite_code', 'payment'],
+              payment_amount: 10, payment_address: '0xpayee'
             })
           }), 0);
         }
@@ -1385,6 +1386,10 @@ describe('interactive events', () => {
     expect(onboardEvents.length).toBe(1);
     expect((onboardEvents[0] as any).methods).toEqual(['invite_code', 'payment']);
     expect((onboardEvents[0] as any).paymentAmount).toBe(10);
+    // Where to send it. The host publishes this and the protocol documents it,
+    // but it was being dropped, so a client could ask a reader to pay without
+    // being able to say where — the payment gate was unusable by construction.
+    expect((onboardEvents[0] as any).paymentAddress).toBe('0xpayee');
 
     agent.reset();
   });

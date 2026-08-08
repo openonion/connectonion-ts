@@ -352,9 +352,19 @@ export class RemoteAgent {
       const ws = new this._WS(wsUrl);
       const timeout = setTimeout(() => { ws.close(); resolve('not_found'); }, 5000);
       ws.onopen = () => {
+        const payload: Record<string, unknown> = {
+          type: 'SESSION_STATUS',
+          session_id: sessionId,
+          to: this.address,
+          timestamp: Math.floor(Date.now() / 1000),
+          nonce: generateUUID(),
+        };
         ws.send(JSON.stringify({
           type: 'SESSION_STATUS',
+          // Compatibility copy for hosts before #766. New hosts verify and
+          // consume the signed payload below.
           session: { session_id: sessionId },
+          ...signPayload(this._keys, payload),
           ...(!isDirect && { to: this.address }),
         }));
       };

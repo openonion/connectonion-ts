@@ -976,6 +976,47 @@ describe('signed request body format', () => {
 });
 
 describe('persistent connection', () => {
+  it('signs a temporary session-status probe for the host and session', async () => {
+    const keys = address.generate();
+    const recipient = `0x${'a'.repeat(64)}`;
+    let captured: Record<string, unknown> | null = null;
+
+    class SignedStatusWS extends MockWebSocket {
+      send(data: unknown): void {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'SESSION_STATUS') {
+          captured = msg;
+          setTimeout(() => this.onmessage?.({
+            data: JSON.stringify({
+              type: 'SESSION_STATUS', session_id: 'test-session', status: 'running',
+            }),
+          }), 0);
+        }
+      }
+    }
+
+    const agent = connect(recipient, {
+      keys,
+      directUrl: 'http://localhost:8000',
+      wsCtor: SignedStatusWS as any,
+    });
+
+    await expect(agent.checkSessionStatus('test-session')).resolves.toBe('running');
+    expect(captured).not.toBeNull();
+    const payload = captured!.payload as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      type: 'SESSION_STATUS', session_id: 'test-session', to: recipient,
+    });
+    expect(payload.nonce).toEqual(expect.any(String));
+    expect(payload.timestamp).toEqual(expect.any(Number));
+    expect(captured!.from).toBe(keys.address);
+    expect(address.verify(keys.address, JSON.stringify(
+      Object.fromEntries(Object.entries(payload).sort(([a], [b]) => a.localeCompare(b)))
+    ), captured!.signature as string)).toBe(true);
+
+    agent.reset();
+  });
+
   it('reuses WebSocket across multiple input() calls', async () => {
     let wsCount = 0;
 

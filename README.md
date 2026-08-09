@@ -8,7 +8,7 @@
 
 ## ✨ What is ConnectOnion?
 
-ConnectOnion TypeScript SDK lets you **connect to and use AI agents built with Python**. Build your agents in Python (where the ecosystem is rich), then use them seamlessly from TypeScript/JavaScript applications.
+ConnectOnion TypeScript SDK lets you **connect to and use AI agents built with Python** from standalone TypeScript, Node.js, or Electron applications. React applications should use [`@connectonion/react`](https://www.npmjs.com/package/@connectonion/react), which includes its own browser connection layer and does not depend on this package.
 
 ```typescript
 // Connect to a Python agent and use it
@@ -30,7 +30,7 @@ console.log(result);
 Python has the richest AI ecosystem - LangChain, LlamaIndex, transformers, and countless ML libraries. Build your agents where the tools are best.
 
 ### 📱 **Use Agents in TypeScript**
-Your web apps, React frontends, Node.js backends, and Electron apps are in TypeScript. Now you can use powerful Python agents directly.
+Your Node.js backends, Electron apps, and other TypeScript clients can use powerful Python agents directly. React frontends use the dedicated `@connectonion/react` SDK.
 
 ### 🌐 **Zero Infrastructure**
 No servers to manage. No API endpoints to deploy. Agents connect peer-to-peer through the relay network.
@@ -90,23 +90,19 @@ Then connect from TypeScript as shown above!
 
 ### Example 1: Connect to ML Agent from React App
 ```typescript
-// React component using a Python ML agent
-import { connect } from 'connectonion';
-import { useState } from 'react';
+// React uses the self-contained React SDK
+import { useAgentForHuman } from '@connectonion/react';
 
 function DataAnalyzer() {
-  const [result, setResult] = useState('');
-  const agent = connect('0xYourPythonMLAgent');
+  const { input, sendMessage } = useAgentForHuman('0xYourPythonMLAgent');
 
   const analyze = async () => {
-    // Python agent has pandas, scikit-learn, matplotlib, etc.
-    const response = await agent.input(
+    await sendMessage(
       'Analyze sales data and predict next quarter trends'
     );
-    setResult(response);
   };
 
-  return <button onClick={analyze}>Analyze Data</button>;
+  return <button onClick={analyze} disabled={!input}>Analyze Data</button>;
 }
 ```
 

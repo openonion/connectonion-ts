@@ -27,14 +27,13 @@ npm ERR! 404 Not Found - GET https://registry.npmjs.org/connectonion-ts
 ```
 
 **Solution:**
-The package might not be published yet or you're using the wrong name.
+The published standalone TypeScript package is named `connectonion`, not `connectonion-ts` or `connectonion-typescript`.
 
 ```bash
-# Try these alternatives:
 npm install connectonion
-# or
-npm install connectonion-typescript
-# or check the exact package name in the repository
+
+# React applications use the self-contained React SDK instead:
+npm install @connectonion/react
 ```
 
 **Workaround - Install from source:**
@@ -46,14 +45,14 @@ npm run build
 npm link
 
 # In your project:
-npm link connectonion-ts
+npm link connectonion
 ```
 
 ### Problem: TypeScript compilation errors after installation
 
 **Symptoms:**
 ```
-error TS2307: Cannot find module 'connectonion-ts'
+error TS2307: Cannot find module 'connectonion'
 ```
 
 **Solution:**
@@ -508,7 +507,7 @@ Cannot find module 'connectonion' or its corresponding type declarations
 ```json
 {
   "dependencies": {
-    "connectonion-ts": "^0.0.1"
+    "connectonion": "^0.3.3"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
@@ -788,7 +787,7 @@ When asking for help, include:
 // environment-info.ts
 console.log('Node version:', process.version);
 console.log('Platform:', process.platform);
-console.log('ConnectOnion version:', require('connectonion-ts/package.json').version);
+console.log('ConnectOnion version:', require('connectonion/package.json').version);
 console.log('TypeScript version:', require('typescript/package.json').version);
 ```
 

@@ -52,7 +52,6 @@ export class AnthropicLLM implements LLM {
     }
 
     // Lazy-load anthropic SDK to keep it optional
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const Anthropic = require('@anthropic-ai/sdk');
     this.client = new Anthropic({ apiKey: key });
     this.model = model;

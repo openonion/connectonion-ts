@@ -14,7 +14,6 @@ export function getWebSocketCtor(): WebSocketCtor {
   if (typeof g.WebSocket === 'function') {
     return g.WebSocket;
   }
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
   const WS = require('ws');
   return WS as WebSocketCtor;
 }

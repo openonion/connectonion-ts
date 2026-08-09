@@ -205,6 +205,7 @@ describe('Status management', () => {
 
     await expect(agent.input('test')).rejects.toThrow();
     expect(agent.status).toBe('idle');
+    agent.reset();
   });
 });
 
@@ -803,6 +804,7 @@ describe('relay fallback', () => {
     });
 
     await expect(agent.input('hello')).rejects.toThrow(/not found/);
+    agent.reset();
   });
 });
 
@@ -1456,6 +1458,7 @@ describe('error handling', () => {
     const agent = connect('0xabc123', { relayUrl: 'ws://localhost:8000', wsCtor: ErrorAfterInputWS as any });
     await expect(agent.input('crash')).rejects.toThrow(/agent crashed/);
     expect(agent.status).toBe('idle');
+    agent.reset();
   });
 });
 

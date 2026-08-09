@@ -204,7 +204,6 @@ export function loadBrowser(): AddressData | null {
  * Generate keys in browser using tweetnacl Ed25519.
  */
 export function generateBrowser(): AddressData {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const nacl = require('tweetnacl');
 
   // Generate Ed25519 key pair
@@ -225,7 +224,6 @@ export function generateBrowser(): AddressData {
  * Sign a message in browser using tweetnacl.
  */
 export function signBrowser(addressData: AddressData, message: string): string {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const nacl = require('tweetnacl');
 
   const msgBytes = new TextEncoder().encode(message);

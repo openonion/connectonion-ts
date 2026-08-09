@@ -49,7 +49,6 @@ export class GeminiLLM implements LLM {
     if (!key) {
       throw new Error('Gemini API key required. Set GEMINI_API_KEY/GOOGLE_API_KEY or pass apiKey.');
     }
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const genai = require('@google/generative-ai');
     const googleAI = new genai.GoogleGenerativeAI(key);
     this.client = googleAI.getGenerativeModel({ model });

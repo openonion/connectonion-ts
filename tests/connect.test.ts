@@ -15,6 +15,7 @@
 
 import { connect, RemoteAgent } from '../src/connect';
 import * as address from '../src/address';
+import { sortedStringify } from '../src/connect/auth';
 
 // Mock WebSocket that handles INIT → CONNECTED → INPUT → OUTPUT protocol
 class MockWebSocket {
@@ -956,6 +957,13 @@ describe('signed requests', () => {
 });
 
 describe('signed request body format', () => {
+  it('canonicalizes nested objects recursively for Python host verification', () => {
+    expect(sortedStringify({
+      type: 'EXEC',
+      args: { z: 1, nested: { y: '后', a: '先' }, a: 2 },
+    })).toBe('{"args":{"a":2,"nested":{"a":"先","y":"后"},"z":1},"type":"EXEC"}');
+  });
+
   it('matches expected format for strict trust agents', () => {
     const keys = address.generate();
     const prompt = 'Test prompt';

@@ -12,13 +12,21 @@ export function isBrowser(): boolean {
     typeof (globalThis as { localStorage?: unknown }).localStorage !== 'undefined';
 }
 
-export function sortedStringify(obj: Record<string, unknown>): string {
-  const sortedKeys = Object.keys(obj).sort();
-  const sortedObj: Record<string, unknown> = {};
-  for (const key of sortedKeys) {
-    sortedObj[key] = obj[key];
+function sortForSigning(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortForSigning);
+  if (value !== null && typeof value === 'object') {
+    const source = value as Record<string, unknown>;
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(source).sort()) {
+      sorted[key] = sortForSigning(source[key]);
+    }
+    return sorted;
   }
-  return JSON.stringify(sortedObj);
+  return value;
+}
+
+export function sortedStringify(obj: Record<string, unknown>): string {
+  return JSON.stringify(sortForSigning(obj));
 }
 
 export function ensureKeys(existing?: address.AddressData): address.AddressData {

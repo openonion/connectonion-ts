@@ -7,6 +7,16 @@
  */
 import { ChatItem, ChatItemType } from './types';
 
+const SUCCESSFUL_TOOL_RESULTS = new Set(['success', 'done', 'completed']);
+
+function toolResultStatus(status: unknown): 'done' | 'error' {
+  // A tool_result is terminal. Unknown values fail closed so a newer server
+  // cannot be rendered as a successful execution by an older SDK mapper.
+  return typeof status === 'string' && SUCCESSFUL_TOOL_RESULTS.has(status)
+    ? 'done'
+    : 'error';
+}
+
 export function mapEventToChatItem(
   chatItems: ChatItem[],
   event: Record<string, unknown>,
@@ -31,7 +41,7 @@ export function mapEventToChatItem(
         (e): e is ChatItem & { type: 'tool_call' } => e.type === 'tool_call' && e.id === toolId
       );
       if (existing) {
-        existing.status = event.status === 'error' ? 'error' : 'done';
+        existing.status = toolResultStatus(event.status);
         existing.result = event.result as string;
         if (typeof event.timing_ms === 'number') {
           existing.timing_ms = event.timing_ms;

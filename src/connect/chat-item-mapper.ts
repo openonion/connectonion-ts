@@ -6,8 +6,10 @@
  *   Integration: called by handlers.ts for stream event types (tool_call, llm_call, etc.)
  */
 import { ChatItem, ChatItemType } from './types';
+import { decodeIncomingEvent } from './wire-events';
 
 const SUCCESSFUL_TOOL_RESULTS = new Set(['success', 'done', 'completed']);
+const RUNNING_TOOL_STATUSES = new Set(['pending', 'running', 'in_progress']);
 
 function toolResultStatus(status: unknown): 'done' | 'error' {
   // A tool_result is terminal. Unknown values fail closed so a newer server
@@ -17,34 +19,62 @@ function toolResultStatus(status: unknown): 'done' | 'error' {
     : 'error';
 }
 
+function toolStartStatus(status: unknown): 'running' | 'error' {
+  if (status === undefined || RUNNING_TOOL_STATUSES.has(String(status))) {
+    return 'running';
+  }
+  return 'error';
+}
+
 export function mapEventToChatItem(
   chatItems: ChatItem[],
   event: Record<string, unknown>,
   addItem: (item: Partial<ChatItem> & { type: ChatItemType }) => void,
 ): void {
-  switch (event.type as string) {
+  const decoded = decodeIncomingEvent(event);
+  if (!decoded) return;
+
+  switch (decoded.type as string) {
     case 'tool_call': {
-      const toolId = (event.tool_id || event.id) as string;
+      const toolId = (decoded.tool_id || decoded.id) as string;
+      const existing = chatItems.find(
+        (item): item is ChatItem & { type: 'tool_call' } =>
+          item.type === 'tool_call' && item.id === toolId
+      );
+      if (existing) {
+        existing.name = decoded.name as string;
+        existing.args = decoded.args as Record<string, unknown>;
+        existing.status = toolStartStatus(decoded.status);
+        break;
+      }
       addItem({
         type: 'tool_call',
         id: toolId,
-        name: event.name as string,
-        args: event.args as Record<string, unknown>,
-        status: 'running',
+        name: decoded.name as string,
+        args: decoded.args as Record<string, unknown>,
+        status: toolStartStatus(decoded.status),
       });
       break;
     }
 
-    case 'tool_result': {
-      const toolId = (event.tool_id || event.id) as string;
+    case 'tool_call_update': {
+      const toolId = (decoded.tool_id || decoded.id) as string;
       const existing = chatItems.find(
         (e): e is ChatItem & { type: 'tool_call' } => e.type === 'tool_call' && e.id === toolId
       );
       if (existing) {
-        existing.status = toolResultStatus(event.status);
-        existing.result = event.result as string;
-        if (typeof event.timing_ms === 'number') {
-          existing.timing_ms = event.timing_ms;
+        if (decoded.status !== undefined) {
+          existing.status = RUNNING_TOOL_STATUSES.has(String(decoded.status))
+            ? 'running'
+            : toolResultStatus(decoded.status);
+        }
+        if (typeof decoded.name === 'string') existing.name = decoded.name;
+        if (decoded.args && typeof decoded.args === 'object') {
+          existing.args = decoded.args as Record<string, unknown>;
+        }
+        if (typeof decoded.result === 'string') existing.result = decoded.result;
+        if (typeof decoded.timing_ms === 'number') {
+          existing.timing_ms = decoded.timing_ms;
         }
       }
       break;
@@ -53,30 +83,30 @@ export function mapEventToChatItem(
     case 'llm_call': {
       addItem({
         type: 'thinking',
-        id: event.id as string,
+        id: decoded.id as string,
         status: 'running',
-        model: event.model as string | undefined,
+        model: decoded.model as string | undefined,
       });
       break;
     }
 
     case 'llm_result': {
-      const llmId = event.id as string;
+      const llmId = decoded.id as string;
       const existingThinking = chatItems.find(
         (e): e is ChatItem & { type: 'thinking' } => e.type === 'thinking' && e.id === llmId
       );
       if (existingThinking) {
-        existingThinking.status = event.status === 'error' ? 'error' : 'done';
-        if (typeof event.duration_ms === 'number') existingThinking.duration_ms = event.duration_ms;
-        if (event.model) existingThinking.model = event.model as string;
-        if (event.usage) {
-          existingThinking.usage = event.usage as {
+        existingThinking.status = decoded.status === 'error' ? 'error' : 'done';
+        if (typeof decoded.duration_ms === 'number') existingThinking.duration_ms = decoded.duration_ms;
+        if (decoded.model) existingThinking.model = decoded.model as string;
+        if (decoded.usage) {
+          existingThinking.usage = decoded.usage as {
             input_tokens?: number; output_tokens?: number;
             prompt_tokens?: number; completion_tokens?: number;
             total_tokens?: number; cost?: number;
           };
         }
-        if (typeof event.context_percent === 'number') existingThinking.context_percent = event.context_percent;
+        if (typeof decoded.context_percent === 'number') existingThinking.context_percent = decoded.context_percent;
       }
       break;
     }
@@ -84,20 +114,20 @@ export function mapEventToChatItem(
     case 'thinking': {
       addItem({
         type: 'thinking',
-        id: event.id != null ? String(event.id) : undefined,
+        id: decoded.id != null ? String(decoded.id) : undefined,
         status: 'done',
-        content: event.content as string | undefined,
-        kind: event.kind as string | undefined,
+        content: decoded.content as string | undefined,
+        kind: decoded.kind as string | undefined,
       });
       break;
     }
 
     case 'assistant': {
-      if (event.content) {
+      if (decoded.content) {
         addItem({
           type: 'agent',
-          id: event.id != null ? String(event.id) : undefined,
-          content: event.content as string,
+          id: decoded.id != null ? String(decoded.id) : undefined,
+          content: decoded.content as string,
         });
       }
       break;

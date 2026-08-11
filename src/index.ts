@@ -67,6 +67,7 @@ export {
   AgentAcceptedInputs,
   AgentOnboard,
   SkillInfo,
+  ACPNotificationFrame,
 } from './connect';
 export * as address from './address';
 export * as addressBrowser from './address-browser';

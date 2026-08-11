@@ -79,6 +79,7 @@
     "ws": false
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "1.2.1",
     "@anthropic-ai/sdk": "^0.67.0",
     "@google/generative-ai": "^0.24.1",
     "dotenv": "^16.0.0",
